@@ -1,0 +1,207 @@
+{
+  "projectType": "sdk-library",
+  "projectName": "aerpawlib",
+  "projectDescription": "A Python library for controlling drones and ground vehicles within the AERPAW platform, supporting scriptable missions, multi-vehicle coordination, and safety enforcement via ArduPilot/MAVSDK.",
+  "theme": "palm",
+  "primaryColor": "#34498e",
+  "lightColor": "#7782b0",
+  "darkColor": "#d9e2d4",
+  "navigation": {
+    "tabs": [
+      {
+        "tab": "Documentation",
+        "groups": [
+          {
+            "group": "Get Started",
+            "pages": [
+              "introduction",
+              "installation",
+              "quickstart"
+            ]
+          },
+          {
+            "group": "Guides",
+            "pages": [
+              "guides/running-scripts",
+              "guides/basic-mission",
+              "guides/state-machine",
+              "guides/multi-vehicle-zmq",
+              "guides/preplanned-trajectory",
+              "guides/safety-checker",
+              "guides/external-processes",
+              "guides/aerpaw-platform"
+            ]
+          },
+          {
+            "group": "Examples",
+            "pages": [
+              "examples/overview",
+              "examples/v1-examples",
+              "examples/v2-examples"
+            ]
+          },
+          {
+            "group": "Migration & Roadmap",
+            "pages": [
+              "migration/v1-to-v2",
+              "migration/feature-parity",
+              "roadmap"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "v1 API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "v1/overview",
+              "v1/connection"
+            ]
+          },
+          {
+            "group": "Vehicles",
+            "pages": [
+              "v1/vehicles/drone",
+              "v1/vehicles/rover",
+              "v1/vehicles/dummy-vehicle"
+            ]
+          },
+          {
+            "group": "Runners",
+            "pages": [
+              "v1/runners/basic-runner",
+              "v1/runners/state-machine",
+              "v1/runners/zmq-state-machine"
+            ]
+          },
+          {
+            "group": "Types & Utilities",
+            "pages": [
+              "v1/types/coordinate",
+              "v1/types/vector-ned",
+              "v1/utilities/plan-files",
+              "v1/utilities/geofence",
+              "v1/utilities/zmq"
+            ]
+          },
+          {
+            "group": "Safety",
+            "pages": [
+              "v1/safety/safety-checker",
+              "v1/safety/architecture"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "v2 API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "v2/overview",
+              "v2/architecture"
+            ]
+          },
+          {
+            "group": "Vehicles",
+            "pages": [
+              "v2/vehicles/drone",
+              "v2/vehicles/rover",
+              "v2/vehicles/vehicle-task",
+              "v2/vehicles/mock-vehicle"
+            ]
+          },
+          {
+            "group": "Runners",
+            "pages": [
+              "v2/runners/basic-runner",
+              "v2/runners/state-machine",
+              "v2/runners/zmq-state-machine",
+              "v2/runners/decorators"
+            ]
+          },
+          {
+            "group": "Types & Utilities",
+            "pages": [
+              "v2/types/coordinate",
+              "v2/types/vector-ned",
+              "v2/types/telemetry",
+              "v2/utilities/plan-files",
+              "v2/utilities/geofence",
+              "v2/utilities/external-process",
+              "v2/utilities/zmq"
+            ]
+          },
+          {
+            "group": "Safety",
+            "pages": [
+              "v2/safety/overview",
+              "v2/safety/command-validation"
+            ]
+          },
+          {
+            "group": "Error Handling",
+            "pages": [
+              "v2/errors/exceptions"
+            ]
+          }
+        ]
+      }
+    ]
+  },
+  "keyFeatures": [
+    "Unified vehicle control API for drones (ArduCopter) and rovers (ArduRover) via MAVSDK",
+    "Scriptable missions with BasicRunner and StateMachine patterns",
+    "Multi-vehicle coordination over ZMQ (leader/follower, swarms)",
+    "Built-in safety checker with KML geofence and speed/altitude validation",
+    "Non-blocking VehicleTask commands with progress tracking and cancellation",
+    "QGroundControl .plan file support for preplanned trajectories",
+    "AERPAW platform integration (OEO logging, checkpoints, safety pilot arming)",
+    "v1 and v2 APIs with backward-compatible imports"
+  ],
+  "publicApiSurface": [
+    "aerpawlib.v1.Drone",
+    "aerpawlib.v1.Rover",
+    "aerpawlib.v1.DummyVehicle",
+    "aerpawlib.v1.BasicRunner",
+    "aerpawlib.v1.StateMachine",
+    "aerpawlib.v1.ZmqStateMachine",
+    "aerpawlib.v1.Coordinate",
+    "aerpawlib.v1.VectorNED",
+    "aerpawlib.v1.SafetyCheckerServer",
+    "aerpawlib.v1.SafetyCheckerClient",
+    "aerpawlib.v1.ExternalProcess",
+    "aerpawlib.v1.read_from_plan",
+    "aerpawlib.v1.read_geofence",
+    "aerpawlib.v2.Drone",
+    "aerpawlib.v2.Rover",
+    "aerpawlib.v2.Vehicle",
+    "aerpawlib.v2.VehicleTask",
+    "aerpawlib.v2.MockVehicle",
+    "aerpawlib.v2.DummyVehicle",
+    "aerpawlib.v2.BasicRunner",
+    "aerpawlib.v2.StateMachine",
+    "aerpawlib.v2.ZmqStateMachine",
+    "aerpawlib.v2.Coordinate",
+    "aerpawlib.v2.VectorNED",
+    "aerpawlib.v2.Battery",
+    "aerpawlib.v2.Attitude",
+    "aerpawlib.v2.GPSInfo",
+    "aerpawlib.v2.ExternalProcess",
+    "aerpawlib.v2.AERPAW_Platform",
+    "aerpawlib.v2.entrypoint",
+    "aerpawlib.v2.state",
+    "aerpawlib.v2.timed_state",
+    "aerpawlib.v2.background",
+    "aerpawlib.v2.at_init",
+    "aerpawlib.v2.expose_zmq",
+    "aerpawlib.v2.expose_field_zmq",
+    "aerpawlib.v2.read_from_plan",
+    "aerpawlib.v2.read_geofence",
+    "aerpawlib.v2.inside",
+    "aerpawlib.v2.do_intersect"
+  ]
+}
