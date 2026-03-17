@@ -1,0 +1,161 @@
+---
+title: 'Rover'
+description: 'MAVSDK-based ground vehicle with 2D navigation and velocity control.'
+---
+
+The `Rover` class extends `Vehicle` and provides ground navigation for wheeled vehicles using ArduPilot Rover. All movement is 2D — altitude is ignored and the vertical component of velocity vectors is zeroed.
+
+```python
+from aerpawlib.v1 import Rover
+
+rover = Rover("udp://:14541")
+```
+
+## Constructor
+
+```python
+Rover(connection_string: str, mavsdk_server_port: int = 50051)
+```
+
+<ParamField path="connection_string" type="string" required>
+  MAVLink connection string. See [Connecting vehicles](/v1/connection) for supported formats.
+</ParamField>
+
+<ParamField path="mavsdk_server_port" type="number" default="50051">
+  gRPC port for the embedded `mavsdk_server`. Use a unique port when running multiple vehicles in the same process.
+</ParamField>
+
+## Properties
+
+The `Rover` exposes the same properties as `Vehicle`:
+
+| Property | Type | Description |
+|---|---|---|
+| `connected` | `bool` | `True` if heartbeats are being received |
+| `position` | `Coordinate` | Current position (lat, lon, relative altitude m) |
+| `battery` | `_BatteryCompat` | Battery: `voltage` (V), `current` (A), `level` (%) |
+| `gps` | `_GPSInfoCompat` | GPS: `fix_type` (0–3), `satellites_visible` |
+| `armed` | `bool` | `True` if the vehicle is armed |
+| `home_coords` | `Coordinate \| None` | Home / start position |
+| `heading` | `float` | Current heading in degrees (0 = north) |
+| `velocity` | `VectorNED` | Current velocity in NED frame (m/s) |
+| `attitude` | `_AttitudeCompat` | Roll, pitch, yaw in radians |
+| `autopilot_info` | `_VersionCompat` | Autopilot firmware version |
+| `mode` | `str` | Current flight mode name |
+
+<Note>
+Rovers do not support `takeoff`, `land`, or `set_heading`. Calling these methods on a `Rover` raises `NotImplementedForVehicleError`.
+</Note>
+
+## Methods
+
+### `goto_coordinates`
+
+```python
+await rover.goto_coordinates(
+    coordinates: Coordinate,
+    tolerance: float = 2.1,
+    target_heading: float | None = None,
+    timeout: float | None = 300.0,
+)
+```
+
+Navigates the rover to the provided coordinates using 2D ground distance. Altitude in `coordinates` is ignored — the rover always navigates at home altitude.
+
+<ParamField path="coordinates" type="Coordinate" required>
+  Target position. Only `lat` and `lon` are used; `alt` is ignored.
+</ParamField>
+
+<ParamField path="tolerance" type="number" default="2.1">
+  Acceptance radius in meters. Valid range: 0.1–100 m. The default is slightly larger than the drone default to account for GPS accuracy on ground vehicles.
+</ParamField>
+
+<ParamField path="target_heading" type="number">
+  Accepted for API compatibility but ignored for rovers — the autopilot handles steering.
+</ParamField>
+
+<ParamField path="timeout" type="number" default="300.0">
+  Maximum seconds to wait before raising `NavigationError`.
+</ParamField>
+
+```python
+from aerpawlib.v1 import Coordinate
+
+target = Coordinate(35.7275, -78.6960, 0)
+await rover.goto_coordinates(target)
+await rover.goto_coordinates(target, tolerance=5)
+```
+
+---
+
+### `set_velocity`
+
+```python
+await rover.set_velocity(
+    velocity_vector: VectorNED,
+    global_relative: bool = True,
+    duration: float | None = None,
+)
+```
+
+Sets the rover's velocity using MAVSDK offboard mode. The `down` component of `velocity_vector` is always zeroed before the command is sent.
+
+<ParamField path="velocity_vector" type="VectorNED" required>
+  Desired velocity in m/s. Positive `north` is forward, positive `east` is right. The `down` component is ignored.
+</ParamField>
+
+<ParamField path="global_relative" type="boolean" default="true">
+  When `True`, the vector is in the global NED frame. When `False`, the vector is rotated by the rover's current heading before being sent.
+</ParamField>
+
+<ParamField path="duration" type="number">
+  Seconds to maintain the velocity before stopping. If `None`, velocity persists until the next movement command.
+</ParamField>
+
+```python
+from aerpawlib.v1 import VectorNED
+
+# drive north at 2 m/s for 5 seconds
+await rover.set_velocity(VectorNED(2, 0, 0), duration=5)
+
+# body-relative: drive forward at 1.5 m/s
+await rover.set_velocity(VectorNED(1.5, 0, 0), global_relative=False)
+```
+
+---
+
+### `set_groundspeed`
+
+```python
+await rover.set_groundspeed(velocity: float)
+```
+
+Sets the cruise speed used by the autopilot for `goto_coordinates`.
+
+<ParamField path="velocity" type="number" required>
+  Cruise speed in m/s.
+</ParamField>
+
+```python
+await rover.set_groundspeed(3)   # 3 m/s
+```
+
+## Full example
+
+```python
+from aerpawlib.v1 import Rover, Coordinate, BasicRunner, entrypoint
+
+class GroundMission(BasicRunner):
+    @entrypoint
+    async def run(self, rover: Rover):
+        waypoints = [
+            Coordinate(35.7275, -78.6960, 0),
+            Coordinate(35.7280, -78.6955, 0),
+            Coordinate(35.7270, -78.6950, 0),
+        ]
+
+        for wp in waypoints:
+            await rover.goto_coordinates(wp, tolerance=3)
+
+        print("Route complete")
+```

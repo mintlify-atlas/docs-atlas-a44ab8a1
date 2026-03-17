@@ -1,0 +1,154 @@
+---
+title: "VectorNED"
+description: "North-East-Down displacement vector in metres with rotation and arithmetic operations."
+---
+
+`VectorNED` represents a displacement in the NED (North, East, Down) coordinate frame, in metres. It is used for velocity commands, position offsets, and sensor readings.
+
+## Constructor
+
+```python
+from aerpawlib.v2 import VectorNED
+
+# All three components
+vec = VectorNED(north=5.0, east=2.0, down=-1.0)
+
+# down defaults to 0.0
+vec2 = VectorNED(5.0, 0.0)
+```
+
+## Fields
+
+<ResponseField name="north" type="float" required>
+  North component in metres (positive = north).
+</ResponseField>
+
+<ResponseField name="east" type="float" required>
+  East component in metres (positive = east).
+</ResponseField>
+
+<ResponseField name="down" type="float" default="0.0">
+  Down component in metres (positive = downward, negative = upward).
+</ResponseField>
+
+## Methods
+
+### `hypot(ignore_down=False)`
+
+```python
+def hypot(self, ignore_down: bool = False) -> float
+```
+
+Return the Euclidean magnitude of the vector in metres.
+
+<ParamField path="ignore_down" type="bool" default="False">
+  If `True`, compute the 2D (horizontal) magnitude only.
+</ParamField>
+
+<ResponseField name="returns" type="float">
+  Vector magnitude in metres.
+</ResponseField>
+
+```python
+vec = VectorNED(3, 4, 0)
+print(vec.hypot())               # 5.0
+print(vec.hypot(ignore_down=True))  # 5.0 (same when down=0)
+
+vec3d = VectorNED(3, 4, 12)
+print(vec3d.hypot())             # ~13.0
+print(vec3d.hypot(ignore_down=True))  # 5.0
+```
+
+---
+
+### `norm()`
+
+```python
+def norm(self) -> VectorNED
+```
+
+Return the unit vector in the same direction. Returns `VectorNED(0, 0, 0)` if the magnitude is zero.
+
+<ResponseField name="returns" type="VectorNED">
+  Normalised vector with magnitude 1.0 (or zero vector).
+</ResponseField>
+
+```python
+vec = VectorNED(0, 5, 0)
+print(vec.norm())  # VectorNED(north=0.0, east=1.0, down=0.0)
+```
+
+---
+
+### `rotate_by_angle(angle_deg)`
+
+```python
+def rotate_by_angle(self, angle_deg: float) -> VectorNED
+```
+
+Rotate the vector by `angle_deg` degrees counterclockwise (when viewed from above). The `down` component is preserved unchanged.
+
+<ParamField path="angle_deg" type="float" required>
+  Rotation angle in degrees. Positive = counterclockwise from above.
+</ParamField>
+
+<ResponseField name="returns" type="VectorNED">
+  New rotated `VectorNED`.
+</ResponseField>
+
+```python
+# Rotate "north" by 90 degrees counterclockwise -> "west"
+vec = VectorNED(1, 0, 0)
+rotated = vec.rotate_by_angle(90)
+# rotated ≈ VectorNED(north~0, east~-1, down=0)
+```
+
+---
+
+### `cross_product(other)`
+
+```python
+def cross_product(self, other: VectorNED) -> VectorNED
+```
+
+Return the cross product `self × other`.
+
+<ParamField path="other" type="VectorNED" required>
+  Right-hand operand.
+</ParamField>
+
+<ResponseField name="returns" type="VectorNED">
+  New `VectorNED` representing the cross product.
+</ResponseField>
+
+## Arithmetic operators
+
+| Expression | Result | Description |
+|------------|--------|-------------|
+| `a + b` | `VectorNED` | Component-wise addition |
+| `a - b` | `VectorNED` | Component-wise subtraction |
+| `a * scalar` | `VectorNED` | Scale by a float |
+| `scalar * a` | `VectorNED` | Scale by a float (commutative) |
+
+```python
+v1 = VectorNED(1, 0, 0)
+v2 = VectorNED(0, 1, 0)
+
+print(v1 + v2)   # VectorNED(north=1, east=1, down=0)
+print(v1 * 5.0)  # VectorNED(north=5, east=0, down=0)
+print(2 * v1)    # VectorNED(north=2, east=0, down=0)
+```
+
+## Common patterns
+
+```python
+# Move 50 m north from current position
+target = drone.position + VectorNED(50, 0)
+await drone.goto_coordinates(target)
+
+# Fly at 3 m/s east for 10 seconds
+await drone.set_velocity(VectorNED(0, 3, 0), duration=10)
+
+# Descend at 1 m/s (positive down = downward)
+await drone.set_velocity(VectorNED(0, 0, 1), duration=5)
+```

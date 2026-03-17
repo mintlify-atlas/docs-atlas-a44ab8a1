@@ -1,0 +1,258 @@
+---
+title: 'Drone'
+description: 'MAVSDK-based multirotor with takeoff, landing, navigation, heading, and velocity control.'
+---
+
+The `Drone` class extends `Vehicle` and provides full flight control for multirotor platforms. It communicates with ArduPilot or PX4 autopilots via MAVSDK.
+
+```python
+from aerpawlib.v1 import Drone
+
+drone = Drone("udp://:14540")
+```
+
+<Warning>
+The constructor raises `NotArmableError` if the vehicle is already armed at connection time. This is a safety guard to prevent scripts from connecting to a flying drone.
+</Warning>
+
+## Constructor
+
+```python
+Drone(connection_string: str, mavsdk_server_port: int = 50051)
+```
+
+<ParamField path="connection_string" type="string" required>
+  MAVLink connection string. See [Connecting vehicles](/v1/connection) for supported formats.
+</ParamField>
+
+<ParamField path="mavsdk_server_port" type="number" default="50051">
+  gRPC port for the embedded `mavsdk_server`. Use a unique port per drone when running multiple vehicles in the same process.
+</ParamField>
+
+## Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `connected` | `bool` | `True` if heartbeats are being received |
+| `position` | `Coordinate` | Current position (lat, lon, relative altitude m) |
+| `battery` | `_BatteryCompat` | Battery status: `voltage` (V), `current` (A), `level` (%) |
+| `gps` | `_GPSInfoCompat` | GPS status: `fix_type` (0–3), `satellites_visible` |
+| `armed` | `bool` | `True` if the vehicle is armed |
+| `home_coords` | `Coordinate \| None` | Home / launch position |
+| `heading` | `float` | Current heading in degrees (0–360, 0 = north) |
+| `velocity` | `VectorNED` | Current velocity in NED frame (m/s) |
+| `attitude` | `_AttitudeCompat` | Roll, pitch, yaw in radians |
+| `autopilot_info` | `_VersionCompat` | Autopilot firmware version |
+| `mode` | `str` | Current flight mode name (e.g. `GUIDED`, `HOLD`) |
+
+## Methods
+
+### `takeoff`
+
+```python
+await drone.takeoff(
+    target_alt: float,
+    min_alt_tolerance: float = 0.95,
+)
+```
+
+Takes off to the specified altitude above ground level. Waits until the drone reaches `target_alt * min_alt_tolerance` before returning.
+
+<ParamField path="target_alt" type="number" required>
+  Target altitude in meters AGL.
+</ParamField>
+
+<ParamField path="min_alt_tolerance" type="number" default="0.95">
+  Fraction of `target_alt` that must be reached before `takeoff` returns. Defaults to 0.95 (95% of target altitude).
+</ParamField>
+
+```python
+await drone.takeoff(10)         # take off to 10 m
+await drone.takeoff(15, 0.90)   # return when 13.5 m is reached
+```
+
+---
+
+### `land`
+
+```python
+await drone.land()
+```
+
+Lands at the current position and waits until the drone is disarmed.
+
+```python
+await drone.land()
+```
+
+---
+
+### `return_to_launch`
+
+```python
+await drone.return_to_launch()
+```
+
+Commands the drone to return to the launch point, land, and disarm.
+
+---
+
+### `goto_coordinates`
+
+```python
+await drone.goto_coordinates(
+    coordinates: Coordinate,
+    tolerance: float = 2.0,
+    target_heading: float | None = None,
+    timeout: float = 300.0,
+)
+```
+
+Navigates to the provided coordinates. Waits until the drone is within `tolerance` meters of the target.
+
+<ParamField path="coordinates" type="Coordinate" required>
+  Target position. The `alt` field is interpreted as altitude relative to home.
+</ParamField>
+
+<ParamField path="tolerance" type="number" default="2.0">
+  Acceptance radius in meters. Valid range: 0.1–100 m.
+</ParamField>
+
+<ParamField path="target_heading" type="number">
+  Optional heading in degrees to maintain during the flight. If omitted, the drone faces the bearing toward the target.
+</ParamField>
+
+<ParamField path="timeout" type="number" default="300.0">
+  Maximum seconds to wait before raising `NavigationError`.
+</ParamField>
+
+```python
+from aerpawlib.v1 import Coordinate
+
+target = Coordinate(35.7275, -78.6960, 15)
+await drone.goto_coordinates(target)
+await drone.goto_coordinates(target, tolerance=5, target_heading=90)
+```
+
+---
+
+### `set_heading`
+
+```python
+await drone.set_heading(
+    heading: float | None,
+    blocking: bool = True,
+    lock_in: bool = True,
+)
+```
+
+Turns the drone to face the specified heading while holding its current position.
+
+<ParamField path="heading" type="number">
+  Target heading in degrees (0 = north). Pass `None` to clear any locked heading.
+</ParamField>
+
+<ParamField path="blocking" type="boolean" default="true">
+  When `True`, waits until the turn is complete before returning.
+</ParamField>
+
+<ParamField path="lock_in" type="boolean" default="true">
+  When `True`, stores the heading for use by subsequent `goto_coordinates` calls.
+</ParamField>
+
+```python
+await drone.set_heading(90)      # face east
+await drone.set_heading(0)       # face north
+await drone.set_heading(None)    # clear locked heading
+```
+
+---
+
+### `set_velocity`
+
+```python
+await drone.set_velocity(
+    velocity_vector: VectorNED,
+    global_relative: bool = True,
+    duration: float | None = None,
+)
+```
+
+Commands the drone to fly at the given NED velocity. Uses MAVSDK offboard mode internally.
+
+<ParamField path="velocity_vector" type="VectorNED" required>
+  Target velocity in m/s. Positive `north` is forward, positive `east` is right, positive `down` is toward ground.
+</ParamField>
+
+<ParamField path="global_relative" type="boolean" default="true">
+  When `True`, the vector is in the global NED frame (world-aligned). When `False`, the vector is relative to the drone's current heading and is rotated before being sent.
+</ParamField>
+
+<ParamField path="duration" type="number">
+  Seconds to maintain the velocity before stopping. If `None`, velocity persists until the next movement command.
+</ParamField>
+
+```python
+from aerpawlib.v1 import VectorNED
+
+# move north at 5 m/s for 10 seconds
+await drone.set_velocity(VectorNED(5, 0, 0), duration=10)
+
+# move east at 3 m/s indefinitely
+await drone.set_velocity(VectorNED(0, 3, 0))
+
+# body-relative: move forward at 2 m/s
+await drone.set_velocity(VectorNED(2, 0, 0), global_relative=False)
+```
+
+---
+
+### `set_groundspeed`
+
+```python
+await drone.set_groundspeed(velocity: float)
+```
+
+Sets the cruise speed used by the autopilot for `goto_coordinates`. This is a suggestion to the autopilot — not all firmware versions support it.
+
+<ParamField path="velocity" type="number" required>
+  Cruise speed in m/s.
+</ParamField>
+
+```python
+await drone.set_groundspeed(8)   # 8 m/s cruise
+```
+
+---
+
+### `set_armed`
+
+```python
+await drone.set_armed(value: bool)
+```
+
+Arms or disarms the vehicle programmatically. In normal use this is handled automatically by the runner; call it directly only when you need explicit control.
+
+<ParamField path="value" type="boolean" required>
+  `True` to arm, `False` to disarm.
+</ParamField>
+
+## Full example
+
+```python
+from aerpawlib.v1 import Drone, Coordinate, VectorNED, BasicRunner, entrypoint
+
+class FlightMission(BasicRunner):
+    @entrypoint
+    async def run(self, drone: Drone):
+        await drone.takeoff(10)
+
+        target = Coordinate(35.7275, -78.6960, 10)
+        await drone.goto_coordinates(target, tolerance=3)
+
+        await drone.set_heading(270)  # face west
+
+        await drone.set_velocity(VectorNED(3, 0, 0), duration=5)
+
+        await drone.land()
+```

@@ -1,122 +1,171 @@
 {
   "$schema": "https://mintlify.com/docs.json",
-  "theme": "mint",
-  "name": "Mint Starter Kit",
+  "name": "aerpawlib",
+  "theme": "palm",
   "colors": {
-    "primary": "#16A34A",
-    "light": "#07C983",
-    "dark": "#15803D"
+    "primary": "#34498e",
+    "light": "#7782b0",
+    "dark": "#d9e2d4"
   },
-  "favicon": "/favicon.svg",
+  "logo": {
+    "light": "https://media.brand.dev/4456ce29-d627-4388-94b7-d3640cc0939c.png",
+    "dark": "https://media.brand.dev/4456ce29-d627-4388-94b7-d3640cc0939c.png"
+  },
+  "navbar": {
+    "primary": {
+      "type": "github",
+      "href": "https://github.com/aerpaw/aerpawlib"
+    }
+  },
+  "footer": {
+    "socials": {
+      "github": "https://github.com/aerpaw/aerpawlib"
+    }
+  },
   "navigation": {
     "tabs": [
       {
-        "tab": "Guides",
+        "tab": "Documentation",
         "groups": [
           {
-            "group": "Getting started",
+            "group": "Get Started",
             "pages": [
-              "index",
-              "quickstart",
-              "development"
+              "introduction",
+              "installation",
+              "quickstart"
             ]
           },
           {
-            "group": "Customization",
+            "group": "Guides",
             "pages": [
-              "essentials/settings",
-              "essentials/navigation"
+              "guides/running-scripts",
+              "guides/basic-mission",
+              "guides/state-machine",
+              "guides/multi-vehicle-zmq",
+              "guides/preplanned-trajectory",
+              "guides/safety-checker",
+              "guides/external-processes",
+              "guides/aerpaw-platform"
             ]
           },
           {
-            "group": "Writing content",
+            "group": "Examples",
             "pages": [
-              "essentials/markdown",
-              "essentials/code",
-              "essentials/images",
-              "essentials/reusable-snippets"
+              "examples/overview",
+              "examples/v1-examples",
+              "examples/v2-examples"
             ]
           },
           {
-            "group": "AI tools",
+            "group": "Migration & Roadmap",
             "pages": [
-              "ai-tools/cursor",
-              "ai-tools/claude-code",
-              "ai-tools/windsurf"
+              "migration/v1-to-v2",
+              "migration/feature-parity",
+              "roadmap"
             ]
           }
         ]
       },
       {
-        "tab": "API reference",
+        "tab": "v1 API Reference",
         "groups": [
           {
-            "group": "API documentation",
+            "group": "Overview",
             "pages": [
-              "api-reference/introduction"
+              "v1/overview",
+              "v1/connection"
             ]
           },
           {
-            "group": "Endpoint examples",
+            "group": "Vehicles",
             "pages": [
-              "api-reference/endpoint/get",
-              "api-reference/endpoint/create",
-              "api-reference/endpoint/delete",
-              "api-reference/endpoint/webhook"
+              "v1/vehicles/drone",
+              "v1/vehicles/rover",
+              "v1/vehicles/dummy-vehicle"
+            ]
+          },
+          {
+            "group": "Runners",
+            "pages": [
+              "v1/runners/basic-runner",
+              "v1/runners/state-machine",
+              "v1/runners/zmq-state-machine"
+            ]
+          },
+          {
+            "group": "Types & Utilities",
+            "pages": [
+              "v1/types/coordinate",
+              "v1/types/vector-ned",
+              "v1/utilities/plan-files",
+              "v1/utilities/geofence",
+              "v1/utilities/zmq"
+            ]
+          },
+          {
+            "group": "Safety",
+            "pages": [
+              "v1/safety/safety-checker",
+              "v1/safety/architecture"
+            ]
+          }
+        ]
+      },
+      {
+        "tab": "v2 API Reference",
+        "groups": [
+          {
+            "group": "Overview",
+            "pages": [
+              "v2/overview",
+              "v2/architecture"
+            ]
+          },
+          {
+            "group": "Vehicles",
+            "pages": [
+              "v2/vehicles/drone",
+              "v2/vehicles/rover",
+              "v2/vehicles/vehicle-task",
+              "v2/vehicles/mock-vehicle"
+            ]
+          },
+          {
+            "group": "Runners",
+            "pages": [
+              "v2/runners/basic-runner",
+              "v2/runners/state-machine",
+              "v2/runners/zmq-state-machine",
+              "v2/runners/decorators"
+            ]
+          },
+          {
+            "group": "Types & Utilities",
+            "pages": [
+              "v2/types/coordinate",
+              "v2/types/vector-ned",
+              "v2/types/telemetry",
+              "v2/utilities/plan-files",
+              "v2/utilities/geofence",
+              "v2/utilities/external-process",
+              "v2/utilities/zmq"
+            ]
+          },
+          {
+            "group": "Safety",
+            "pages": [
+              "v2/safety/overview",
+              "v2/safety/command-validation"
+            ]
+          },
+          {
+            "group": "Error Handling",
+            "pages": [
+              "v2/errors/exceptions"
             ]
           }
         ]
       }
-    ],
-    "global": {
-      "anchors": [
-        {
-          "anchor": "Documentation",
-          "href": "https://mintlify.com/docs",
-          "icon": "book-open-cover"
-        },
-        {
-          "anchor": "Blog",
-          "href": "https://mintlify.com/blog",
-          "icon": "newspaper"
-        }
-      ]
-    }
-  },
-  "logo": {
-    "light": "/logo/light.svg",
-    "dark": "/logo/dark.svg"
-  },
-  "navbar": {
-    "links": [
-      {
-        "label": "Support",
-        "href": "mailto:hi@mintlify.com"
-      }
-    ],
-    "primary": {
-      "type": "button",
-      "label": "Dashboard",
-      "href": "https://dashboard.mintlify.com"
-    }
-  },
-  "contextual": {
-    "options": [
-     "copy",
-     "view",
-     "chatgpt",
-     "claude",
-     "perplexity",
-     "mcp",
-     "cursor",
-     "vscode"
-   ]
-  },
-  "footer": {
-    "socials": {
-      "x": "https://x.com/mintlify",
-      "github": "https://github.com/mintlify",
-      "linkedin": "https://linkedin.com/company/mintlify"
-    }
+    ]
   }
 }

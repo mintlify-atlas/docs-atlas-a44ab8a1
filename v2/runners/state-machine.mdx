@@ -1,0 +1,208 @@
+---
+title: "StateMachine"
+description: "State-based mission runner with transitions, timed states, background tasks, and init hooks."
+---
+
+`StateMachine` models a mission as a set of named states. Each state method returns the name of the next state, or `None` to stop the machine.
+
+## Quick example
+
+```python
+import asyncio
+from aerpawlib.v2 import StateMachine, Drone, state, timed_state, background, at_init
+
+class Survey(StateMachine):
+    @at_init
+    async def setup(self, drone: Drone):
+        print(f"Home: {drone.home_coords}")
+
+    @state(name="takeoff", first=True)
+    async def takeoff(self, drone: Drone):
+        await drone.takeoff(altitude=20)
+        return "fly"
+
+    @state(name="fly")
+    async def fly(self, drone: Drone):
+        await drone.goto_coordinates(drone.position + VectorNED(100, 0))
+        return "hold"
+
+    @timed_state(name="hold", duration=10, loop=False)
+    async def hold(self, drone: Drone):
+        return "land"
+
+    @state(name="land")
+    async def land(self, drone: Drone):
+        await drone.land()
+        return None  # stop the machine
+
+    @background
+    async def monitor(self, drone: Drone):
+        while True:
+            print(f"alt={drone.position.alt:.1f}m")
+            await asyncio.sleep(2)
+```
+
+## Decorators
+
+### `@state(name, first=False)`
+
+Registers a method as a named state. The method receives the vehicle as its argument and must return a string (next state name) or `None` to stop.
+
+<ParamField path="name" type="str" required>
+  Unique state name used for transitions. Cannot be empty.
+</ParamField>
+
+<ParamField path="first" type="bool" default="False">
+  If `True`, this is the initial state. Exactly one state must have `first=True`.
+</ParamField>
+
+```python
+@state(name="fly", first=True)
+async def fly(self, drone: Drone) -> str:
+    await drone.goto_coordinates(target)
+    return "land"
+```
+
+---
+
+### `@timed_state(name, duration, loop=False, first=False)`
+
+Registers a timed state. The method is called once (or repeatedly if `loop=True`) and the runner waits for `duration` seconds before advancing to the returned next state.
+
+<ParamField path="name" type="str" required>
+  Unique state name.
+</ParamField>
+
+<ParamField path="duration" type="float" required>
+  How long to remain in this state (seconds).
+</ParamField>
+
+<ParamField path="loop" type="bool" default="False">
+  If `True`, the method is called repeatedly every state-machine tick within the duration window.
+</ParamField>
+
+<ParamField path="first" type="bool" default="False">
+  If `True`, this is the initial state.
+</ParamField>
+
+```python
+@timed_state(name="loiter", duration=30, loop=True)
+async def loiter(self, drone: Drone) -> str:
+    print(f"Holding at {drone.position.alt:.1f}m")
+    return "land"
+```
+
+---
+
+### `@background`
+
+Marks a method to run as a concurrent asyncio task throughout the state machine. Background tasks start before the first state and run until the machine stops.
+
+If a background task raises an exception, it is restarted with exponential backoff (up to 10 attempts before stopping).
+
+```python
+@background
+async def telemetry_log(self, drone: Drone):
+    while True:
+        print(drone.position)
+        await asyncio.sleep(1)
+```
+
+---
+
+### `@at_init`
+
+Marks a method to run once during initialisation, before arming and before the first state. Multiple `@at_init` methods run in declaration order.
+
+```python
+@at_init
+async def load_waypoints(self, drone: Drone):
+    self.waypoints = read_from_plan("mission.plan")
+    print(f"Loaded {len(self.waypoints)} waypoints")
+```
+
+## Config dataclass
+
+States can also be registered without decorators using an explicit `StateMachineConfig`:
+
+```python
+from aerpawlib.v2 import StateMachine, StateMachineConfig, StateSpec
+
+class MyMission(StateMachine):
+    config = StateMachineConfig(
+        initial_state="fly",
+        states=[
+            StateSpec(name="fly", method_name="fly", first=True),
+            StateSpec(name="land", method_name="land"),
+        ],
+    )
+
+    async def fly(self, drone):
+        return "land"
+
+    async def land(self, drone):
+        return None
+```
+
+### `StateMachineConfig`
+
+```python
+@dataclass
+class StateMachineConfig:
+    initial_state: str
+    states: List[StateSpec] = field(default_factory=list)
+    backgrounds: List[str] = field(default_factory=list)
+    at_init: List[str] = field(default_factory=list)
+```
+
+### `StateSpec`
+
+```python
+@dataclass
+class StateSpec:
+    name: str          # Unique state name
+    method_name: str   # Method name on the runner class
+    first: bool = False
+    duration: float = 0.0   # Non-zero for timed states
+    loop: bool = False
+```
+
+## State transitions
+
+A state method signals the next state by returning its name as a string:
+
+```python
+@state(name="a", first=True)
+async def state_a(self, drone):
+    return "b"   # transition to state "b"
+
+@state(name="b")
+async def state_b(self, drone):
+    return None  # stop the machine
+```
+
+Returning an unregistered name raises `InvalidStateError`.
+
+## Stopping the machine
+
+Call `stop()` from within a state or background task, or return `None` from any state:
+
+```python
+def stop(self) -> None
+```
+
+The machine finishes the current state before stopping.
+
+## Unexpected disarm guard
+
+Like `BasicRunner`, `StateMachine.run` wraps the main loop in `_run_with_disarm_guard`. An unexpected disarm raises `UnexpectedDisarmError` and cancels the machine.
+
+## Raises
+
+| Exception | When |
+|-----------|------|
+| `NoInitialStateError` | No state has `first=True` |
+| `MultipleInitialStatesError` | More than one state has `first=True` |
+| `InvalidStateError` | State transition returns an unknown state name |
+| `InvalidStateNameError` | A `@state` decorator is given an empty name |
+| `UnexpectedDisarmError` | Vehicle disarms during mission execution |

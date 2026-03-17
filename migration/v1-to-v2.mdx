@@ -1,0 +1,268 @@
+---
+title: "Migrating from v1 to v2"
+description: "A practical guide to updating aerpawlib scripts from the v1 API to v2, covering imports, runners, safety, types, and plan files."
+---
+
+v2 is not backward-compatible with v1 scripts. This guide walks through every breaking change and shows side-by-side before/after code for each area.
+
+<Note>
+  The `@entrypoint` decorator style works in both v1 and v2. If your script uses only `BasicRunner` with `@entrypoint`, the runner class body requires no changes — only the imports need updating.
+</Note>
+
+## Summary of breaking changes
+
+| Area | v1 | v2 |
+|------|----|----|
+| Imports | `aerpawlib.v1.*` submodules | `aerpawlib.v2` flat namespace |
+| Runners | Decorator-based (`@entrypoint`) | Decorator or config dataclass |
+| Safety | `SafetyCheckerClient` (manual) | `vehicle.can_takeoff`, `vehicle.can_goto` |
+| Types | `aerpawlib.v1.util` | `aerpawlib.v2.types` |
+| Plan files | `aerpawlib.v1.util.read_from_plan` | `aerpawlib.v2.plan.read_from_plan` |
+| Connection | Blocking | Async |
+
+## Imports
+
+v1 uses deep submodule paths. v2 exposes a flat top-level namespace.
+
+<Tabs>
+  <Tab title="v1">
+    ```python
+    from aerpawlib.v1.runner import BasicRunner, entrypoint
+    from aerpawlib.v1.util import VectorNED, Coordinate
+    from aerpawlib.v1.vehicle import Drone
+    ```
+  </Tab>
+  <Tab title="v2">
+    ```python
+    from aerpawlib.v2 import BasicRunner, Drone, VectorNED, Coordinate, entrypoint
+    ```
+  </Tab>
+</Tabs>
+
+For `StateMachine` and `ZmqStateMachine`:
+
+<Tabs>
+  <Tab title="v1">
+    ```python
+    from aerpawlib.v1.runner import StateMachine, state, timed_state, background
+    from aerpawlib.v1.runner import ZmqStateMachine, expose_zmq
+    ```
+  </Tab>
+  <Tab title="v2">
+    ```python
+    from aerpawlib.v2 import StateMachine, state, timed_state, background
+    from aerpawlib.v2 import ZmqStateMachine, expose_zmq
+    ```
+  </Tab>
+</Tabs>
+
+## Runners
+
+### BasicRunner with @entrypoint (backward compatible)
+
+The `@entrypoint` style works identically in both versions. No changes needed inside the class body.
+
+<Tabs>
+  <Tab title="v1">
+    ```python
+    from aerpawlib.v1.runner import BasicRunner, entrypoint
+    from aerpawlib.v1.vehicle import Drone
+
+    class MyMission(BasicRunner):
+        @entrypoint
+        async def run(self, drone: Drone):
+            ...
+    ```
+  </Tab>
+  <Tab title="v2">
+    ```python
+    from aerpawlib.v2 import BasicRunner, Drone, entrypoint
+
+    class MyMission(BasicRunner):
+        @entrypoint
+        async def run(self, drone: Drone):
+            ...
+    ```
+  </Tab>
+</Tabs>
+
+### Config dataclass style (v2 only)
+
+v2 adds an explicit config dataclass approach as an alternative to `@entrypoint`:
+
+```python
+from aerpawlib.v2 import BasicRunner, BasicRunnerConfig, Drone
+
+class MyMission(BasicRunner):
+    config = BasicRunnerConfig(entrypoint="run")
+
+    async def run(self, drone: Drone):
+        ...
+```
+
+Both styles are valid in v2. The decorator style is recommended for scripts migrating from v1.
+
+## Safety and command validation
+
+v1 requires you to instantiate and call `SafetyCheckerClient` manually. v2 integrates safety validation directly into vehicle methods.
+
+<Tabs>
+  <Tab title="v1">
+    ```python
+    from aerpawlib.v1.safety import SafetyCheckerClient
+
+    # Manual instantiation and explicit calls
+    client = SafetyCheckerClient("127.0.0.1", 14580)
+    ok = client.check_takeoff(altitude=10)
+    if not ok:
+        return
+    await drone.takeoff(10)
+    ```
+  </Tab>
+  <Tab title="v2">
+    ```python
+    from aerpawlib.v2.safety import SafetyCheckerClient
+
+    # Pass safety client at connect time
+    client = SafetyCheckerClient("127.0.0.1", 14580)
+    drone = await Drone.connect(conn, safety=client)
+
+    # Call can_takeoff / can_goto before commands
+    ok, msg = await drone.can_takeoff(10)
+    if not ok:
+        print(f"Safety check failed: {msg}")
+        return
+    await drone.takeoff(altitude=10)
+
+    target = drone.position + VectorNED(20, 0, 0)
+    ok, msg = await drone.can_goto(target)
+    if not ok:
+        await drone.land()
+        return
+    await drone.goto_coordinates(target)
+    ```
+  </Tab>
+</Tabs>
+
+<Note>
+  When running via the aerpawlib CLI, the safety client is built automatically from `--safety-checker-port` (defaults to 14580 on AERPAW). Outside AERPAW the safety checker is optional — when absent, `can_takeoff` and `can_goto` return `(True, "")` and commands proceed normally.
+</Note>
+
+## Types
+
+`Coordinate` and `VectorNED` exist in both versions with the same API. Only the import path changes.
+
+<Tabs>
+  <Tab title="v1">
+    ```python
+    from aerpawlib.v1.util import Coordinate, VectorNED
+    ```
+  </Tab>
+  <Tab title="v2">
+    ```python
+    from aerpawlib.v2.types import Coordinate, VectorNED
+    # or via the flat namespace:
+    from aerpawlib.v2 import Coordinate, VectorNED
+    ```
+  </Tab>
+</Tabs>
+
+## Plan files
+
+The `read_from_plan` and `read_from_plan_complete` functions have the same API in both versions. Only the module path changes.
+
+<Tabs>
+  <Tab title="v1">
+    ```python
+    from aerpawlib.v1.util import read_from_plan, read_from_plan_complete
+
+    waypoints = read_from_plan("mission.plan")
+    ```
+  </Tab>
+  <Tab title="v2">
+    ```python
+    from aerpawlib.v2.plan import read_from_plan, read_from_plan_complete
+
+    waypoints = read_from_plan("mission.plan")
+    ```
+  </Tab>
+</Tabs>
+
+## StateMachine decorators
+
+All `StateMachine` decorators (`@state`, `@timed_state`, `@background`, `@at_init`, `@expose_zmq`, `@expose_field_zmq`) work the same way in both versions. Update the import path only.
+
+<Tabs>
+  <Tab title="v1">
+    ```python
+    from aerpawlib.v1.runner import (
+        StateMachine,
+        state,
+        timed_state,
+        background,
+        at_init,
+    )
+    ```
+  </Tab>
+  <Tab title="v2">
+    ```python
+    from aerpawlib.v2 import (
+        StateMachine,
+        state,
+        timed_state,
+        background,
+        at_init,
+    )
+    ```
+  </Tab>
+</Tabs>
+
+## Error handling
+
+v2 introduces typed exception classes. v1 raises generic `Exception` or `RuntimeError` in most failure cases.
+
+<Tabs>
+  <Tab title="v1">
+    ```python
+    try:
+        await drone.takeoff(10)
+    except Exception as e:
+        print(f"Takeoff failed: {e}")
+    ```
+  </Tab>
+  <Tab title="v2">
+    ```python
+    from aerpawlib.v2.errors import VehicleCommandError, SafetyCheckError
+
+    try:
+        await drone.takeoff(10)
+    except SafetyCheckError as e:
+        print(f"Safety rejected takeoff: {e}")
+    except VehicleCommandError as e:
+        print(f"Vehicle rejected command: {e}")
+    ```
+  </Tab>
+</Tabs>
+
+## Migration checklist
+
+<Steps>
+  <Step title="Update imports">
+    Replace all `aerpawlib.v1.*` imports with `aerpawlib.v2` equivalents. The flat namespace (`from aerpawlib.v2 import ...`) covers most use cases.
+  </Step>
+  <Step title="Update plan file imports">
+    Change `from aerpawlib.v1.util import read_from_plan` to `from aerpawlib.v2.plan import read_from_plan`.
+  </Step>
+  <Step title="Update type imports">
+    Change `from aerpawlib.v1.util import Coordinate, VectorNED` to `from aerpawlib.v2 import Coordinate, VectorNED`.
+  </Step>
+  <Step title="Add command validation (recommended)">
+    Add `can_takeoff` / `can_goto` calls before movement commands to integrate with the v2 safety system.
+  </Step>
+  <Step title="Update CLI flags">
+    Pass `--api-version v2` when running scripts. Update `--conn` strings from `udp://` to `udpin://` if using SITL.
+  </Step>
+  <Step title="Review error handling">
+    Optionally update `except Exception` blocks to catch v2 typed exceptions (`VehicleCommandError`, `SafetyCheckError`).
+  </Step>
+</Steps>

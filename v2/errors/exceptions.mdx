@@ -1,0 +1,245 @@
+---
+title: "Exceptions"
+description: "Full exception hierarchy for aerpawlib v2 with error codes, severity levels, and handling patterns."
+---
+
+All aerpawlib v2 exceptions inherit from `AerpawlibError`. Each carries a machine-readable `code`, a human-readable `message`, a `severity` level, and optionally the `original_error` that caused it.
+
+## Base class
+
+### `AerpawlibError`
+
+```python
+class AerpawlibError(Exception):
+    message: str
+    code: str
+    severity: Literal["warning", "error", "critical"]
+    original_error: Optional[Exception]
+```
+
+<ResponseField name="message" type="str">
+  Human-readable description of the error.
+</ResponseField>
+
+<ResponseField name="code" type="str">
+  Machine-readable error code (e.g. `"TAKEOFF_ERROR"`, `"CONNECTION_TIMEOUT"`).
+</ResponseField>
+
+<ResponseField name="severity" type="str">
+  One of `"warning"`, `"error"`, or `"critical"`. Critical errors indicate conditions requiring immediate experiment termination.
+</ResponseField>
+
+<ResponseField name="original_error" type="Exception | None">
+  The underlying exception if this error wraps another (e.g. a MAVSDK `ActionError`).
+</ResponseField>
+
+## Exception hierarchy
+
+```
+AerpawlibError
+├── AerpawConnectionError          code: CONNECTION_ERROR
+│   ├── ConnectionTimeoutError       code: CONNECTION_TIMEOUT
+│   ├── HeartbeatLostError           code: HEARTBEAT_LOST         severity: critical
+│   └── PortInUseError               code: PORT_IN_USE
+├── CommandError                   code: COMMAND_ERROR
+│   ├── ArmError                     code: ARM_ERROR
+│   ├── DisarmError                  code: DISARM_ERROR
+│   ├── TakeoffError                 code: TAKEOFF_ERROR
+│   ├── LandingError                 code: LANDING_ERROR
+│   ├── NavigationError              code: NAVIGATION_ERROR
+│   ├── VelocityError                code: VELOCITY_ERROR
+│   └── RTLError                     code: RTL_ERROR
+├── StateError                     code: STATE_ERROR
+│   ├── NotArmableError              code: NOT_ARMABLE
+│   ├── NotConnectedError            code: NOT_CONNECTED
+│   └── UnexpectedDisarmError        code: UNEXPECTED_DISARM     severity: critical
+├── RunnerError                    code: RUNNER_ERROR
+│   ├── NoEntrypointError            code: NO_ENTRYPOINT
+│   ├── NoInitialStateError          code: NO_INITIAL_STATE
+│   ├── MultipleInitialStatesError   code: MULTIPLE_INITIAL_STATES
+│   ├── InvalidStateError            code: INVALID_STATE
+│   └── InvalidStateNameError        code: INVALID_STATE_NAME
+└── PlanError                      code: PLAN_ERROR
+```
+
+## Exception descriptions
+
+### Connection exceptions
+
+<AccordionGroup>
+  <Accordion title="AerpawConnectionError">
+    Base class for all connection-related errors. Raised when the vehicle connection is malformed or fails.
+
+    ```python
+    raise AerpawConnectionError("Invalid connection string 'foo': missing '://'")
+    ```
+  </Accordion>
+
+  <Accordion title="ConnectionTimeoutError">
+    No heartbeat was received within the configured timeout after calling `connect()`.
+
+    ```python
+    except ConnectionTimeoutError as e:
+        print(f"Timed out after {e.timeout_seconds}s")
+    ```
+
+    **Extra attribute:** `timeout_seconds: float`
+  </Accordion>
+
+  <Accordion title="HeartbeatLostError (critical)">
+    The vehicle heartbeat was lost mid-flight. This is a `critical` severity error, signalling that the vehicle may be unreachable.
+
+    ```python
+    except HeartbeatLostError as e:
+        print(f"Heartbeat lost {e.last_heartbeat_age:.1f}s ago")
+    ```
+
+    **Extra attribute:** `last_heartbeat_age: float`
+  </Accordion>
+
+  <Accordion title="PortInUseError">
+    The mavsdk\_server gRPC port is already in use.
+
+    **Extra attribute:** `port: int`
+  </Accordion>
+</AccordionGroup>
+
+### Command exceptions
+
+<AccordionGroup>
+  <Accordion title="CommandError">
+    Base class for command execution failures.
+  </Accordion>
+
+  <Accordion title="ArmError">
+    The `arm()` MAVSDK command failed. Wraps the original `ActionError`.
+  </Accordion>
+
+  <Accordion title="DisarmError">
+    The `disarm()` MAVSDK command failed.
+  </Accordion>
+
+  <Accordion title="TakeoffError">
+    The takeoff command failed (MAVSDK returned an `ActionError`).
+  </Accordion>
+
+  <Accordion title="LandingError">
+    The land command failed or timed out waiting for disarm.
+  </Accordion>
+
+  <Accordion title="NavigationError">
+    Navigation to a target could not be completed — either the `goto_location` call failed or the drone did not arrive within the timeout.
+  </Accordion>
+
+  <Accordion title="VelocityError">
+    A velocity command could not be applied (offboard mode could not be started).
+  </Accordion>
+
+  <Accordion title="RTLError">
+    The return-to-launch command failed or timed out.
+  </Accordion>
+</AccordionGroup>
+
+### State exceptions
+
+<AccordionGroup>
+  <Accordion title="NotArmableError">
+    An arm command was attempted but the vehicle's pre-arm checks have not passed.
+  </Accordion>
+
+  <Accordion title="NotConnectedError">
+    A command requiring an active connection was attempted on a disconnected vehicle.
+  </Accordion>
+
+  <Accordion title="UnexpectedDisarmError (critical)">
+    The vehicle disarmed during mission execution without being commanded to do so (e.g. motor failsafe). `BasicRunner` and `StateMachine` raise this automatically to terminate the mission.
+  </Accordion>
+</AccordionGroup>
+
+### Runner exceptions
+
+<AccordionGroup>
+  <Accordion title="NoEntrypointError">
+    A `BasicRunner` subclass has no `@entrypoint` decorator and no `BasicRunnerConfig` set.
+  </Accordion>
+
+  <Accordion title="NoInitialStateError">
+    A `StateMachine` subclass has no state with `first=True`.
+  </Accordion>
+
+  <Accordion title="MultipleInitialStatesError">
+    More than one state in a `StateMachine` is marked `first=True`.
+  </Accordion>
+
+  <Accordion title="InvalidStateError">
+    A state transition returned a state name that is not registered on the machine.
+
+    **Extra attributes:** `state_name: str`, `available_states: list`
+  </Accordion>
+
+  <Accordion title="InvalidStateNameError">
+    A `@state` or `@timed_state` decorator was given an empty string as the name.
+  </Accordion>
+</AccordionGroup>
+
+### Other exceptions
+
+<AccordionGroup>
+  <Accordion title="PlanError">
+    A `.plan` file could not be found, read, or parsed.
+  </Accordion>
+</AccordionGroup>
+
+## Handling patterns
+
+### Catch specific exceptions
+
+```python
+from aerpawlib.v2 import TakeoffError, NavigationError, AerpawlibError
+
+try:
+    await drone.takeoff(20)
+except TakeoffError as e:
+    print(f"[{e.code}] Takeoff failed: {e.message}")
+    if e.original_error:
+        print(f"  Caused by: {e.original_error}")
+```
+
+### Catch by severity
+
+```python
+from aerpawlib.v2 import AerpawlibError
+
+try:
+    await runner.run(drone)
+except AerpawlibError as e:
+    if e.severity == "critical":
+        # Trigger emergency procedures
+        emergency_notify(str(e))
+    else:
+        print(f"Mission error ({e.severity}): {e}")
+```
+
+### Catch all aerpawlib errors
+
+```python
+from aerpawlib.v2 import AerpawlibError
+
+try:
+    await drone.goto_coordinates(target)
+except AerpawlibError as e:
+    print(f"{e.code}: {e.message}")
+```
+
+### UnexpectedDisarmError
+
+`UnexpectedDisarmError` is raised automatically by `BasicRunner` and `StateMachine` when the vehicle disarms mid-mission. You do not need to check for it explicitly unless you are writing a custom runner.
+
+```python
+from aerpawlib.v2 import UnexpectedDisarmError
+
+try:
+    await runner.run(drone)
+except UnexpectedDisarmError:
+    print("Vehicle disarmed unexpectedly — experiment terminated")
+```

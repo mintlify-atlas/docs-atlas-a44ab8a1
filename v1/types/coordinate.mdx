@@ -1,0 +1,150 @@
+---
+title: 'Coordinate'
+description: 'WGS84 geographic position with distance, bearing, and offset operations.'
+---
+
+`Coordinate` represents an absolute point in WGS84 geographic space, defined by latitude, longitude, and altitude.
+
+```python
+from aerpawlib.v1 import Coordinate
+```
+
+## Constructor
+
+```python
+Coordinate(lat: float, lon: float, alt: float = 0)
+```
+
+<ParamField path="lat" type="number" required>
+  Latitude in decimal degrees.
+</ParamField>
+
+<ParamField path="lon" type="number" required>
+  Longitude in decimal degrees.
+</ParamField>
+
+<ParamField path="alt" type="number" default="0">
+  Altitude in meters relative to the home location. Defaults to 0.
+</ParamField>
+
+```python
+# Position at sea level
+pos = Coordinate(35.7275, -78.6960)
+
+# Position at 10 m AGL
+pos = Coordinate(35.7275, -78.6960, 10)
+```
+
+## Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `lat` | `float` | Latitude in decimal degrees |
+| `lon` | `float` | Longitude in decimal degrees |
+| `alt` | `float` | Altitude in meters |
+
+## Methods
+
+### `distance`
+
+```python
+pos.distance(other: Coordinate) -> float
+```
+
+Calculates the 3D distance to `other` using the Haversine formula for horizontal distance and Euclidean difference for altitude.
+
+```python
+a = Coordinate(35.7275, -78.6960, 10)
+b = Coordinate(35.7280, -78.6955, 15)
+print(a.distance(b))   # meters, includes altitude difference
+```
+
+### `ground_distance`
+
+```python
+pos.ground_distance(other: Coordinate) -> float
+```
+
+Calculates the horizontal (2D) distance to `other`, ignoring altitude.
+
+```python
+print(a.ground_distance(b))   # horizontal meters only
+```
+
+### `bearing`
+
+```python
+pos.bearing(other: Coordinate, wrap_360: bool = True) -> float
+```
+
+Calculates the compass bearing from this coordinate to `other`.
+
+<ParamField path="other" type="Coordinate" required>
+  The target coordinate.
+</ParamField>
+
+<ParamField path="wrap_360" type="boolean" default="true">
+  When `True`, wraps the result to `[0, 360)`. When `False`, may return negative values.
+</ParamField>
+
+```python
+bearing = a.bearing(b)   # degrees, 0 = north, 90 = east
+```
+
+### `to_json`
+
+```python
+pos.to_json() -> str
+```
+
+Serializes the coordinate to a JSON string containing `lat`, `lon`, and `alt`.
+
+```python
+print(pos.to_json())   # '{"lat": 35.7275, "lon": -78.696, "alt": 10}'
+```
+
+## Arithmetic operators
+
+### `Coordinate + VectorNED` → `Coordinate`
+
+Applies a NED displacement to produce a new coordinate. Positive `down` decreases altitude.
+
+```python
+from aerpawlib.v1 import VectorNED
+
+pos = Coordinate(35.7275, -78.6960, 10)
+offset = VectorNED(100, 0, 0)   # 100 m north
+new_pos = pos + offset
+```
+
+### `Coordinate - VectorNED` → `Coordinate`
+
+Subtracts a NED displacement.
+
+```python
+new_pos = pos - VectorNED(50, 0, 0)   # 50 m south
+```
+
+### `Coordinate - Coordinate` → `VectorNED`
+
+Computes the NED displacement vector from `other` to `self`.
+
+```python
+vec = pos_a - pos_b   # VectorNED pointing from b to a
+```
+
+## Example
+
+```python
+from aerpawlib.v1 import Coordinate, VectorNED
+
+home = Coordinate(35.7275, -78.6960, 0)
+target = Coordinate(35.7280, -78.6955, 10)
+
+print(f"Distance: {home.distance(target):.1f} m")
+print(f"Ground distance: {home.ground_distance(target):.1f} m")
+print(f"Bearing: {home.bearing(target):.1f} deg")
+
+# offset 200 m east
+waypoint = home + VectorNED(0, 200, -10)   # 200 m east, 10 m up
+```

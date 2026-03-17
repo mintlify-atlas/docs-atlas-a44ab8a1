@@ -1,0 +1,88 @@
+---
+title: "Introduction"
+description: "aerpawlib is a Python library for controlling drones and ground vehicles within the AERPAW platform."
+---
+
+## What is aerpawlib?
+
+aerpawlib is a Python library that provides a unified interface for autonomous vehicle control within the [AERPAW](https://aerpaw.org) testbed platform. It wraps ArduPilot/MAVSDK to give researchers and developers a clean, scriptable API for writing drone and ground vehicle missions — without needing to deal with raw MAVLink or MAVSDK internals.
+
+<CardGroup cols={2}>
+  <Card title="Quick Start" icon="rocket" href="/quickstart">
+    Write and run your first drone mission in minutes
+  </Card>
+  <Card title="Installation" icon="download" href="/installation">
+    Install aerpawlib and set up your environment
+  </Card>
+  <Card title="v1 API Reference" icon="book" href="/v1/overview">
+    Stable API compatible with legacy aerpawlib scripts
+  </Card>
+  <Card title="v2 API Reference" icon="code" href="/v2/overview">
+    Modern async-first API with advanced features
+  </Card>
+</CardGroup>
+
+## Key features
+
+<CardGroup cols={2}>
+  <Card title="Unified vehicle control" icon="drone">
+    Control drones and rovers with the same consistent API. Supports takeoff, landing, waypoint navigation, velocity control, and heading management.
+  </Card>
+  <Card title="Scriptable missions" icon="scroll">
+    Write missions as Python classes using `BasicRunner` for linear missions or `StateMachine` for state-based flight with dynamic transitions.
+  </Card>
+  <Card title="Multi-vehicle coordination" icon="network-wired">
+    Coordinate fleets of vehicles over ZMQ. Run leader/follower patterns, swarms, or ground-air teams with `ZmqStateMachine`.
+  </Card>
+  <Card title="Safety enforcement" icon="shield-check">
+    Built-in safety checker validates waypoints, altitudes, and speeds against KML geofences before any command is sent to the vehicle.
+  </Card>
+  <Card title="Non-blocking commands" icon="bolt">
+    v2 `VehicleTask` lets you issue commands without blocking the main loop — monitor progress, cancel in flight, or await completion.
+  </Card>
+  <Card title="AERPAW platform integration" icon="satellite">
+    Native integration with AERPAW infrastructure: OEO logging, checkpoint management, safety pilot arming, and automatic safety checker wiring.
+  </Card>
+</CardGroup>
+
+## v1 vs v2
+
+aerpawlib ships two API versions:
+
+| | v1 | v2 |
+|---|---|---|
+| **Status** | Stable | Beta |
+| **Backend** | MAVSDK | MAVSDK |
+| **Architecture** | Dual-loop (background threads) | Single async event loop |
+| **Runners** | Decorator-based | Decorator or config dataclass |
+| **Commands** | Always blocking | Blocking or non-blocking (`VehicleTask`) |
+| **Safety** | `SafetyCheckerClient` (manual) | `vehicle.can_takeoff/can_goto` (automatic) |
+| **Backward compat** | Full legacy compatibility | Not compatible with v1 scripts |
+
+<Note>
+  New projects should use **v2**. Existing scripts using the legacy `aerpawlib.*` imports continue to work via v1 compatibility layer.
+</Note>
+
+## Supported vehicles
+
+| Vehicle | Description | v1 | v2 |
+|---------|-------------|----|----|
+| `Drone` | ArduCopter multirotor — takeoff, land, 3D waypoint nav | ✓ | ✓ |
+| `Rover` | ArduRover ground vehicle — 2D waypoint nav | ✓ | ✓ |
+| `DummyVehicle` | No-op vehicle for scripts without hardware | ✓ | ✓ |
+| `MockVehicle` | In-memory test double for unit tests | — | ✓ |
+
+## Connection strings
+
+aerpawlib uses MAVSDK connection strings for all vehicle connections:
+
+```
+udp://:14540          # SITL default (listen on all interfaces)
+udpin://127.0.0.1:14550  # SITL (explicit address)
+serial:///dev/ttyUSB0:57600  # Serial connection
+tcp://192.168.1.100:5760     # TCP connection
+```
+
+## License
+
+aerpawlib is released under the [MIT License](https://github.com/aerpaw/aerpawlib/blob/main/LICENSE).

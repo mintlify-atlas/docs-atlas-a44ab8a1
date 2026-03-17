@@ -1,0 +1,233 @@
+---
+title: "Rover"
+description: "API reference for the Rover class — ground vehicle with 2D navigation and velocity control."
+---
+
+`Rover` extends the base `Vehicle` class for ArduPilot ground vehicles. It shares the same `connect`, properties, `set_armed`, `set_groundspeed`, and `close` interface as `Drone`, with the following differences:
+
+- Navigation uses **ground distance** (2D) for arrival checks — altitude is ignored.
+- Default arrival tolerance is `2.1` m.
+- The `down` component of `set_velocity` is always zeroed.
+- The rover switches to ArduPilot **GUIDED mode** automatically before arming.
+- There is no `takeoff`, `land`, `return_to_launch`, `set_heading`, or `stop_velocity`.
+
+## Connecting
+
+```python
+from aerpawlib.v2 import Rover
+from aerpawlib.v2.safety import SafetyCheckerClient
+
+rover = await Rover.connect("udpin://0.0.0.0:14550")
+
+# With safety checker
+rover = await Rover.connect(
+    "udpin://0.0.0.0:14550",
+    safety=SafetyCheckerClient("127.0.0.1", 14580),
+)
+```
+
+### `Rover.connect`
+
+```python
+@classmethod
+async def connect(
+    cls,
+    connection_string: str,
+    mavsdk_server_port: int = 50051,
+    *,
+    timeout: float = 30.0,
+    safety: Optional[Any] = None,
+) -> Rover
+```
+
+Same signature as `Drone.connect`. Returns a `Rover` instance.
+
+**Raises:** `ConnectionTimeoutError` if no heartbeat arrives within `timeout`.
+
+## Properties
+
+All properties are shared with the base `Vehicle` class.
+
+| Property | Type | Description |
+|----------|------|-------------|
+| `position` | `Coordinate` | Current position (lat, lon, relative altitude) |
+| `home_coords` | `Optional[Coordinate]` | Home coordinate, or `None` before home is set |
+| `home_amsl` | `float` | Home altitude above mean sea level in metres |
+| `battery` | `Battery` | Latest battery telemetry |
+| `gps` | `GPSInfo` | Latest GPS telemetry |
+| `armed` | `bool` | `True` if the vehicle is armed |
+| `heading` | `float` | Current heading in degrees |
+| `velocity` | `VectorNED` | Current NED velocity in m/s |
+| `attitude` | `Attitude` | Roll, pitch, yaw in radians |
+| `mode` | `str` | Current autopilot mode name |
+| `armable` | `bool` | `True` if pre-arm checks pass |
+| `connected` | `bool` | `True` if running and not closed |
+| `closed` | `bool` | `True` after `close()` |
+
+## Commands
+
+### Navigate to coordinates
+
+```python
+async def goto_coordinates(
+    self,
+    coordinates: Coordinate,
+    tolerance: float = 2.1,
+    target_heading: Optional[float] = None,
+    timeout: float = 300.0,
+    blocking: bool = True,
+) -> Optional[VehicleTask]
+```
+
+Navigate to a target coordinate using **ground distance** for the arrival check. Altitude in `coordinates` is not used for arrival.
+
+<ParamField path="coordinates" type="Coordinate" required>
+  Target position. Only the `lat` and `lon` fields are used for arrival — the rover holds its current altitude.
+</ParamField>
+
+<ParamField path="tolerance" type="float" default="2.1">
+  Arrival radius in metres (2D ground distance).
+</ParamField>
+
+<ParamField path="target_heading" type="float | None" default="None">
+  Accepted for API parity with Drone but has no effect on rovers.
+</ParamField>
+
+<ParamField path="timeout" type="float" default="300.0">
+  Maximum seconds to wait for arrival when `blocking=True`.
+</ParamField>
+
+<ParamField path="blocking" type="bool" default="True">
+  If `False`, return a `VehicleTask` immediately.
+</ParamField>
+
+<ResponseField name="returns" type="None | VehicleTask">
+  `None` when `blocking=True`; a `VehicleTask` when `blocking=False`. Cancelling a non-blocking task calls `action.hold()` to stop the rover.
+</ResponseField>
+
+**Raises:** `NavigationError` if the command fails or the rover does not arrive within `timeout`.
+
+<CodeGroup>
+
+```python blocking
+from aerpawlib.v2 import Coordinate
+
+await rover.goto_coordinates(
+    Coordinate(35.727, -78.696, 0),
+    tolerance=3.0,
+)
+```
+
+```python non-blocking
+handle = await rover.goto_coordinates(
+    Coordinate(35.727, -78.696, 0),
+    blocking=False,
+)
+await handle.wait_done()
+```
+
+</CodeGroup>
+
+---
+
+### Set velocity
+
+```python
+async def set_velocity(
+    self,
+    velocity_vector: VectorNED,
+    global_relative: bool = True,
+    duration: Optional[float] = None,
+) -> None
+```
+
+Set rover velocity using MAVSDK offboard mode. The `down` component is always zeroed.
+
+<ParamField path="velocity_vector" type="VectorNED" required>
+  Desired velocity in m/s. The `down` component is ignored.
+</ParamField>
+
+<ParamField path="global_relative" type="bool" default="True">
+  If `False`, the vector is rotated by the rover's current heading before being sent.
+</ParamField>
+
+<ParamField path="duration" type="float | None" default="None">
+  Hold the velocity for this many seconds then stop. If `None`, the velocity runs until the next command.
+</ParamField>
+
+**Raises:** `VelocityError` if offboard mode cannot be started.
+
+```python
+from aerpawlib.v2 import VectorNED
+
+await rover.set_velocity(VectorNED(2, 0, 0), duration=10)  # 2 m/s north for 10 s
+```
+
+---
+
+### Arm or disarm
+
+```python
+async def set_armed(self, value: bool) -> None
+```
+
+<ParamField path="value" type="bool" required>
+  `True` to arm, `False` to disarm.
+</ParamField>
+
+---
+
+### Set maximum speed
+
+```python
+async def set_groundspeed(self, velocity: float) -> None
+```
+
+<ParamField path="velocity" type="float" required>
+  Maximum ground speed in m/s.
+</ParamField>
+
+---
+
+### Close
+
+```python
+def close(self) -> None
+```
+
+Cancel all telemetry and command tasks and release the MAVSDK connection.
+
+## ArduPilot GUIDED mode
+
+<Note>
+ArduPilot Rover must be in GUIDED mode to accept arm commands over MAVLink. The `_preflight_wait` sequence sends a `MAV_CMD_DO_SET_MODE` command via `mavlink_direct` and waits for the mode telemetry to update to `OFFBOARD` (MAVSDK's name for GUIDED). If the mode switch times out, arming may fail.
+</Note>
+
+## Commands not available on Rover
+
+The following Drone methods do **not** exist on `Rover`:
+
+| Method | Reason |
+|--------|--------|
+| `takeoff` | Rovers are ground vehicles |
+| `land` | Rovers are ground vehicles |
+| `return_to_launch` | RTL requires aerial flight |
+| `set_heading` | ArduRover heading is managed by the autopilot |
+| `stop_velocity` | Rovers use `set_velocity` with `duration` or issue a new command |
+
+## Full example
+
+```python
+from aerpawlib.v2 import BasicRunner, Rover, Coordinate, VectorNED, entrypoint
+
+class GroundPatrol(BasicRunner):
+    @entrypoint
+    async def run(self, rover: Rover):
+        await rover.goto_coordinates(
+            Coordinate(35.7275, -78.6960, 0),
+            tolerance=3.0,
+        )
+        # Drive north at 1.5 m/s for 5 seconds
+        await rover.set_velocity(VectorNED(1.5, 0, 0), duration=5)
+        rover.close()
+```

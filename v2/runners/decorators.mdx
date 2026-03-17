@@ -1,0 +1,179 @@
+---
+title: "Runner decorators"
+description: "Reference table for all aerpawlib v2 runner decorators."
+---
+
+All decorators work as Python descriptors: when the decorated method is assigned to a class attribute, `__set_name__` fires and registers the method in the runner's config. No runtime scanning is needed.
+
+## Reference table
+
+| Decorator | Runner class | Description |
+|-----------|-------------|-------------|
+| `@entrypoint` | `BasicRunner` | Marks the single async entry point |
+| `@state(name, first=False)` | `StateMachine` | Defines a named state that returns the next state or `None` |
+| `@timed_state(name, duration, loop=False, first=False)` | `StateMachine` | State that runs for a fixed duration |
+| `@background` | `StateMachine` | Concurrent task running throughout the machine |
+| `@at_init` | `StateMachine` | Runs once before arming and before the first state |
+| `@expose_zmq(name)` | `ZmqStateMachine` | Exposes a `@state` for remote ZMQ transition commands |
+| `@expose_field_zmq(name)` | `ZmqStateMachine` | Exposes an async method as a queryable ZMQ field |
+
+## `@entrypoint`
+
+**Class:** `BasicRunner`
+
+Decorates exactly one async method. The method receives the vehicle as its only argument.
+
+```python
+from aerpawlib.v2 import BasicRunner, entrypoint
+
+class MyMission(BasicRunner):
+    @entrypoint
+    async def run(self, drone):
+        await drone.takeoff(10)
+```
+
+- Sets `MyMission.config = BasicRunnerConfig(entrypoint="run")` at definition time.
+- Raises `RunnerError` if a second `@entrypoint` is declared on the same class.
+
+---
+
+## `@state(name, first=False)`
+
+**Class:** `StateMachine`
+
+Registers a named state. The method must return a state name string or `None`.
+
+```python
+from aerpawlib.v2 import StateMachine, state
+
+class MyMission(StateMachine):
+    @state(name="start", first=True)
+    async def start(self, drone):
+        await drone.takeoff(10)
+        return "fly"
+```
+
+- `first=True` designates the initial state. Exactly one state per class must have `first=True`.
+- Raises `MultipleInitialStatesError` if more than one state uses `first=True`.
+
+---
+
+## `@timed_state(name, duration, loop=False, first=False)`
+
+**Class:** `StateMachine`
+
+Registers a timed state. The method runs once (or in a loop if `loop=True`) and the machine waits for `duration` seconds before transitioning.
+
+```python
+from aerpawlib.v2 import timed_state
+
+@timed_state(name="hold", duration=15, loop=True)
+async def hold(self, drone):
+    print(f"Holding at {drone.position.alt:.1f}m")
+    return "land"
+```
+
+---
+
+## `@background`
+
+**Class:** `StateMachine`
+
+Marks a method to run as a concurrent asyncio task throughout the state machine. Starts before the first state, runs until the machine stops.
+
+Background tasks are restarted automatically with exponential backoff on exceptions (maximum 10 retries).
+
+```python
+from aerpawlib.v2 import background
+import asyncio
+
+@background
+async def log_position(self, drone):
+    while True:
+        print(drone.position)
+        await asyncio.sleep(2)
+```
+
+---
+
+## `@at_init`
+
+**Class:** `StateMachine`
+
+Marks a method to run once during initialisation, before arming and before the first state. Multiple `@at_init` methods run in declaration order.
+
+```python
+from aerpawlib.v2 import at_init
+
+@at_init
+async def load_config(self, drone):
+    self.target = Coordinate(35.728, -78.696, 20)
+```
+
+---
+
+## `@expose_zmq(name)`
+
+**Class:** `ZmqStateMachine`
+
+Exposes a `@state` for remote transition commands over ZMQ. Must be stacked above `@state`.
+
+```python
+from aerpawlib.v2 import expose_zmq, state
+
+@expose_zmq("survey")
+@state(name="survey", first=True)
+async def survey(self, drone):
+    ...
+    return "land"
+```
+
+Another runner triggers this state with:
+
+```python
+await self.transition_runner("drone-1", "survey")
+```
+
+---
+
+## `@expose_field_zmq(name)`
+
+**Class:** `ZmqStateMachine`
+
+Exposes an async method so remote runners can query its return value using `query_field`.
+
+```python
+from aerpawlib.v2 import expose_field_zmq
+
+@expose_field_zmq("altitude")
+async def get_altitude(self, drone):
+    return drone.position.alt
+```
+
+Another runner queries this with:
+
+```python
+alt = await self.query_field("drone-1", "altitude")
+```
+
+---
+
+## Decorator stacking order
+
+When combining `@expose_zmq` with `@state`, `@expose_zmq` must be outermost (applied last, written first):
+
+```python
+@expose_zmq("fly")    # outermost — written first
+@state(name="fly", first=True)  # innermost — written second
+async def fly(self, drone):
+    ...
+```
+
+## Constraints summary
+
+| Constraint | Detail |
+|------------|--------|
+| One `@entrypoint` per `BasicRunner` class | Raises `RunnerError` on second declaration |
+| One `first=True` state per `StateMachine` class | Raises `MultipleInitialStatesError` |
+| State names must be non-empty | Raises `InvalidStateNameError` |
+| `@expose_zmq` only on `@state`/`@timed_state` | Raises `RunnerError` if applied to a plain method |

@@ -1,0 +1,167 @@
+---
+title: "ExternalProcess"
+description: "Async wrapper for launching and communicating with subprocesses via stdin/stdout."
+---
+
+`ExternalProcess` launches an external executable and provides an async interface for reading stdout and writing stdin.
+
+## Constructor
+
+```python
+from aerpawlib.v2 import ExternalProcess
+
+proc = ExternalProcess(
+    executable="python3",
+    params=["-u", "sensor_reader.py"],
+)
+```
+
+```python
+ExternalProcess(
+    executable: str,
+    params: Optional[List[str]] = None,
+    stdin: Optional[str] = None,
+    stdout: Optional[str] = None,
+)
+```
+
+<ParamField path="executable" type="str" required>
+  Path or name of the executable to run.
+</ParamField>
+
+<ParamField path="params" type="List[str] | None" default="None">
+  Additional command-line arguments passed to the executable.
+</ParamField>
+
+<ParamField path="stdin" type="str | None" default="None">
+  If `None` (default), stdin is opened as a pipe (enabling `send_input`). If a file path string, stdin is redirected from that file.
+</ParamField>
+
+<ParamField path="stdout" type="str | None" default="None">
+  If `None` (default), stdout is opened as a pipe (enabling `read_line` and `wait_until_output`). If a file path string, stdout is redirected to that file.
+</ParamField>
+
+## Methods
+
+### `start()`
+
+```python
+async def start(self) -> None
+```
+
+Launch the process. Must be called before any other method.
+
+```python
+await proc.start()
+```
+
+---
+
+### `read_line()`
+
+```python
+async def read_line(self) -> Optional[str]
+```
+
+Read one line from the process's stdout. Strips the trailing newline.
+
+<ResponseField name="returns" type="str | None">
+  The line as a string, or `None` if the process has closed its stdout.
+</ResponseField>
+
+```python
+line = await proc.read_line()
+if line is not None:
+    print(line)
+```
+
+---
+
+### `send_input(data)`
+
+```python
+async def send_input(self, data: str) -> None
+```
+
+Write a string to the process's stdin.
+
+<ParamField path="data" type="str" required>
+  Data to write. Include `"\n"` if the subprocess expects newline-terminated input.
+</ParamField>
+
+**Raises:** `RuntimeError` if stdin is not available (e.g. was redirected to a file at construction).
+
+```python
+await proc.send_input("start\n")
+```
+
+---
+
+### `wait_until_output(output_regex)`
+
+```python
+async def wait_until_output(self, output_regex: str) -> List[str]
+```
+
+Block until a stdout line matches the given regular expression.
+
+<ParamField path="output_regex" type="str" required>
+  Regular expression to search for in each output line.
+</ParamField>
+
+<ResponseField name="returns" type="List[str]">
+  All lines read up to and including the matching line. Returns all collected lines if the process exits before a match is found.
+</ResponseField>
+
+```python
+lines = await proc.wait_until_output(r"READY")
+print(f"Process ready after {len(lines)} lines")
+```
+
+---
+
+### `wait_until_terminated()`
+
+```python
+async def wait_until_terminated(self) -> None
+```
+
+Wait until the subprocess exits.
+
+```python
+await proc.wait_until_terminated()
+print(f"Exit code: {proc.process.returncode}")
+```
+
+## Attributes
+
+<ResponseField name="process" type="asyncio.subprocess.Process | None">
+  The underlying asyncio subprocess object. Available after `start()` is called. Access `process.returncode` after termination.
+</ResponseField>
+
+## Full example
+
+```python
+from aerpawlib.v2 import ExternalProcess, BasicRunner, Drone, entrypoint
+
+class MissionWithSensor(BasicRunner):
+    @entrypoint
+    async def run(self, drone: Drone):
+        # Start sensor reader
+        sensor = ExternalProcess("python3", params=["-u", "sensor.py"])
+        await sensor.start()
+
+        # Wait for it to initialise
+        await sensor.wait_until_output(r"READY")
+
+        # Request a reading
+        await sensor.send_input("read\n")
+        reading = await sensor.read_line()
+        print(f"Sensor: {reading}")
+
+        # Fly mission
+        await drone.takeoff(20)
+        await drone.land()
+
+        await sensor.wait_until_terminated()
+```

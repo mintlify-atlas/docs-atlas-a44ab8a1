@@ -1,0 +1,129 @@
+---
+title: "VehicleTask"
+description: "Non-blocking command handle with progress tracking, cancellation, and error propagation."
+---
+
+`VehicleTask` is the return type of non-blocking commands such as `goto_coordinates(blocking=False)`. It lets you track progress, cancel the command, and wait for completion without suspending your coroutine.
+
+## Getting a VehicleTask
+
+Pass `blocking=False` to a navigation command:
+
+```python
+handle = await drone.goto_coordinates(
+    Coordinate(35.728, -78.696, 20),
+    blocking=False,
+)
+```
+
+The command is dispatched immediately. The coroutine returns a `VehicleTask` handle while the vehicle continues navigating in the background.
+
+## Properties
+
+### `progress`
+
+```python
+@property
+def progress(self) -> float
+```
+
+Estimated completion fraction from `0.0` (just started) to `1.0` (arrived). Progress is computed from the ratio of remaining distance to initial distance.
+
+## Methods
+
+### `is_done()`
+
+```python
+def is_done(self) -> bool
+```
+
+Returns `True` when the command has finished, whether by success, error, or cancellation. Safe to poll in a loop.
+
+---
+
+### `is_cancelled()`
+
+```python
+def is_cancelled(self) -> bool
+```
+
+Returns `True` after `cancel()` has been called. The task may still be running until the on-cancel action (e.g. RTL) completes.
+
+---
+
+### `cancel()`
+
+```python
+def cancel(self) -> None
+```
+
+Request cancellation. This synchronously sets `is_cancelled()` to `True` and, if the task has an on-cancel callback, schedules it as an asyncio task:
+
+- **Drone**: triggers `return_to_launch()`.
+- **Rover**: triggers `action.hold()`.
+
+<Warning>
+Calling `cancel()` outside of an async context (i.e. when no event loop is running) will set the cancelled flag but the on-cancel callback will not run. The vehicle may continue its current task.
+</Warning>
+
+---
+
+### `wait_done()`
+
+```python
+async def wait_done(self) -> None
+```
+
+Suspend the caller until the command completes or is cancelled. If the command failed, the stored exception is re-raised.
+
+**Raises:** The exception stored by the background task (e.g. `NavigationError`) if the command failed.
+
+## Patterns
+
+### Monitor progress while navigating
+
+```python
+handle = await drone.goto_coordinates(target, blocking=False)
+
+while not handle.is_done():
+    print(f"Progress: {handle.progress:.0%}")
+    await asyncio.sleep(1)
+
+await handle.wait_done()  # raises if an error occurred
+```
+
+### Cancel mid-flight
+
+```python
+handle = await drone.goto_coordinates(target, blocking=False)
+
+await asyncio.sleep(5)
+if some_condition:
+    handle.cancel()          # drone begins RTL
+
+await handle.wait_done()  # completes after RTL finishes
+```
+
+### Race against a timeout
+
+```python
+handle = await drone.goto_coordinates(target, blocking=False)
+
+try:
+    await asyncio.wait_for(handle.wait_done(), timeout=60)
+except asyncio.TimeoutError:
+    handle.cancel()
+    await handle.wait_done()
+```
+
+### Error handling
+
+```python
+from aerpawlib.v2 import NavigationError
+
+handle = await drone.goto_coordinates(target, blocking=False)
+try:
+    await handle.wait_done()
+except NavigationError as e:
+    print(f"Navigation failed: {e.code} — {e.message}")
+```

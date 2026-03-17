@@ -1,0 +1,175 @@
+---
+title: "Running scripts"
+description: "Complete CLI reference for aerpawlib, including all flags, connection strings, and config file usage."
+---
+
+The `aerpawlib` command loads your mission script, connects to a vehicle, and runs the runner it finds.
+
+```bash
+aerpawlib --script <path/to/script.py> --conn <connection> --vehicle <type> [options]
+```
+
+## Core arguments
+
+<ParamField path="--script" type="string" required>
+  Path to the Python script file containing your runner class. Accepts a file path (`my_mission.py`, `examples/v1/basic_example.py`) or a dotted module name (`examples.v1.basic_example`).
+</ParamField>
+
+<ParamField path="--conn" type="string" required>
+  MAVLink connection string. See [Connection string formats](#connection-string-formats) below.
+</ParamField>
+
+<ParamField path="--vehicle" type="string" required>
+  Vehicle type. One of:
+
+  - `drone` — multicopter with takeoff, land, and 3D movement
+  - `rover` — ground vehicle with 2D movement
+  - `generic` — base `Vehicle` class
+  - `none` — `DummyVehicle` for scripts that do not need a physical vehicle
+</ParamField>
+
+<ParamField path="--api-version" type="string" default="v1">
+  Which API version to use. Either `v1` or `v2`. Defaults to `v1`.
+</ParamField>
+
+<ParamField path="--config" type="string">
+  Path to a JSON configuration file. Keys correspond to the other CLI flags. CLI arguments override values set in the config file. See [Config file](#config-file) below.
+</ParamField>
+
+## Execution flags
+
+<ParamField path="--skip-init" type="boolean">
+  Skip the pre-arm initialization wait. The vehicle will not wait for armable state before executing the runner. Use with caution — commands sent before the vehicle is ready may be ignored.
+</ParamField>
+
+<ParamField path="--skip-rtl" type="boolean">
+  Do not automatically return to launch and land at the end of the script. By default, aerpawlib issues an RTL command if the vehicle is still armed when the runner exits.
+</ParamField>
+
+<ParamField path="--debug-dump" type="boolean">
+  Enable verbose vehicle state logging (v1 only). Logs internal vehicle properties on each tick. Not yet implemented for v2.
+</ParamField>
+
+<ParamField path="--no-aerpaw-environment" type="boolean">
+  Run in standalone or SITL mode. Skips the AERPAW platform connection check and allows the vehicle to arm itself. Without this flag, a failed AERPAW platform connection is treated as a fatal error.
+</ParamField>
+
+<ParamField path="--no-aerpawlib-stdout" type="boolean">
+  Prevent aerpawlib from printing to stdout. Useful when integrating with external logging pipelines.
+</ParamField>
+
+## ZMQ flags
+
+Required when your script uses `ZmqStateMachine`. Start the proxy first with `aerpawlib --run-proxy`.
+
+<ParamField path="--run-proxy" type="boolean">
+  Start the ZMQ message proxy and exit. This process must be running before any ZMQ runners start. Run it in a separate terminal or process.
+
+  ```bash
+  aerpawlib --run-proxy
+  ```
+</ParamField>
+
+<ParamField path="--zmq-identifier" type="string">
+  Unique name for this vehicle in the ZMQ network. Each vehicle in a multi-vehicle mission must have a distinct identifier (e.g. `leader`, `follower`).
+</ParamField>
+
+<ParamField path="--zmq-proxy-server" type="string">
+  IP address or hostname of the machine running the ZMQ proxy. Example: `127.0.0.1` for local SITL.
+</ParamField>
+
+## Logging flags
+
+<ParamField path="-v / --verbose" type="boolean">
+  Enable DEBUG-level logging. Shows internal vehicle state, connection details, and state machine transitions.
+</ParamField>
+
+<ParamField path="-q / --quiet" type="boolean">
+  Suppress INFO messages. Only WARNING and above are shown.
+</ParamField>
+
+<ParamField path="--log-file" type="string">
+  Write all logs to a file in addition to the console. The file always captures DEBUG-level output regardless of the `-v` / `-q` flags.
+</ParamField>
+
+## Connection tuning
+
+<ParamField path="--conn-timeout" type="number" default="30">
+  Initial connection timeout in seconds. aerpawlib waits this long for the vehicle to respond before giving up.
+</ParamField>
+
+<ParamField path="--heartbeat-timeout" type="number" default="5">
+  Maximum seconds without a MAVLink heartbeat before the connection is considered lost and the script aborts.
+</ParamField>
+
+<ParamField path="--mavsdk-port" type="number" default="50051">
+  gRPC port for the embedded `mavsdk_server` (v2 only). Use a unique port per vehicle process when running multiple vehicles on the same host to avoid port conflicts.
+</ParamField>
+
+<ParamField path="--safety-checker-port" type="number">
+  Port for the `SafetyCheckerServer` (v2 only). In the AERPAW environment, defaults to `14580` when this flag is not provided. Outside AERPAW, optional — if the connection fails, safety validation is bypassed (passthrough mode). See [Safety checker](/guides/safety-checker).
+</ParamField>
+
+## Connection string formats
+
+| Format | Example | Use case |
+|---|---|---|
+| UDP (SITL default) | `udp://127.0.0.1:14550` | SITL on the same machine |
+| UDP input | `udpin://127.0.0.1:14550` | Listen for incoming UDP connection |
+| UDP listen | `udp://:14540` | Listen on all interfaces |
+| Serial | `serial:///dev/ttyUSB0:57600` | USB telemetry radio |
+| Serial (high baud) | `serial:///dev/ttyACM0:115200` | Direct USB connection |
+| TCP | `tcp://192.168.1.100:5760` | Network connection to GCS or companion computer |
+
+<Note>
+  All versions use MAVSDK connection strings. The `udpin://` prefix means aerpawlib listens for an incoming connection from the vehicle, while `udp://` means aerpawlib connects outbound to the vehicle's address.
+</Note>
+
+## Config file
+
+You can store all CLI arguments in a JSON file and pass it with `--config`:
+
+```json mission.json
+{
+  "script": "examples/v1/basic_example.py",
+  "conn": "udp://127.0.0.1:14550",
+  "vehicle": "drone",
+  "verbose": true
+}
+```
+
+```bash
+aerpawlib --config mission.json
+```
+
+Boolean flags are expressed as `true` (to pass the flag) or `false` (to omit it). CLI arguments always override values in the config file, so you can use `--config` as a base and override individual options:
+
+```bash
+aerpawlib --config mission.json --verbose --skip-rtl
+```
+
+## Troubleshooting
+
+**Connection timeout**
+
+Ensure SITL or the vehicle is running and the MAVLink port matches `--conn`. Try increasing `--conn-timeout` if startup is slow.
+
+**No Runner found**
+
+Your script must define exactly one class that directly subclasses `BasicRunner`, `StateMachine`, or `ZmqStateMachine`. Multiple runner classes in the same script are not supported.
+
+**Vehicle not armable**
+
+- In SITL: wait a few seconds after startup for the home position and EKF to stabilize.
+- In AERPAW: the safety pilot must arm the vehicle from the ground station.
+- In SITL with v2: make sure `--no-aerpaw-environment` is passed.
+
+**ZMQ scripts fail to connect**
+
+Start the proxy before running any vehicle scripts:
+
+```bash
+aerpawlib --run-proxy
+```
+
+Then in separate terminals, start each vehicle with matching `--zmq-identifier` and `--zmq-proxy-server` values.

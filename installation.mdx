@@ -1,0 +1,92 @@
+---
+title: "Installation"
+description: "Install aerpawlib and set up your development environment."
+---
+
+aerpawlib requires Python 3.9 or later and is tested on Python 3.9 through 3.14.
+
+## Install aerpawlib
+
+<Steps>
+  <Step title="Install from source">
+    Clone the repository and install in editable mode:
+
+    ```bash
+    pip install -e .
+    ```
+
+    This installs all runtime dependencies:
+
+    | Package | Purpose |
+    |---|---|
+    | `mavsdk>=2.0.0` | v2 vehicle control via gRPC |
+    | `dronekit>=2.9.2` | v1 vehicle control |
+    | `pymavlink>=2.4.0` | MAVLink protocol utilities |
+    | `pyzmq>=25.0.0` | ZMQ messaging for multi-vehicle coordination |
+    | `pykml>=0.2.0` | KML geofence parsing |
+    | `shapely>=2.0.0` | Geofence geometry |
+    | `pyyaml>=6.0` | Safety checker config parsing |
+    | `requests>=2.32.4` | AERPAW platform integration |
+  </Step>
+
+  <Step title="(Optional) Install development dependencies and SITL">
+    To run integration tests and simulate flights locally with ArduPilot SITL:
+
+    ```bash
+    pip install -e .[dev]
+    ```
+
+    This adds `pytest`, `pytest-asyncio`, `psutil`, and all SITL toolchain packages (`MAVProxy`, `pexpect`, `empy`, etc.).
+
+    Then run the SITL setup script to download and compile the ArduPilot Copter and Rover simulators:
+
+    ```bash
+    aerpawlib-setup-sitl
+    ```
+
+    Alternatively, run the one-liner installer:
+
+    ```bash
+    ./scripts/install_dev.sh
+    ```
+
+    <Note>
+      SITL setup downloads and compiles ArduPilot, which may take several minutes depending on your machine.
+    </Note>
+  </Step>
+
+  <Step title="Verify the installation">
+    Confirm the CLI entry point is available:
+
+    ```bash
+    aerpawlib --help
+    ```
+
+    You should see the argument reference for `--script`, `--conn`, `--vehicle`, and other options.
+  </Step>
+</Steps>
+
+## Entry points installed
+
+Installing aerpawlib registers three commands:
+
+| Command | Description |
+|---|---|
+| `aerpawlib` | Run mission scripts against a vehicle |
+| `aerpawlib-setup-sitl` | Download and compile ArduPilot SITL |
+| `aerpawlib-run-example` | Run a bundled example script |
+
+## Python version support
+
+aerpawlib is tested on Python 3.9, 3.10, 3.11, 3.12, 3.13, and 3.14. Python 3.9 is the minimum version.
+
+## Next steps
+
+<Columns cols={2}>
+  <Card title="Quickstart" icon="rocket" href="/quickstart">
+    Write and run your first mission in under five minutes.
+  </Card>
+  <Card title="Running scripts" icon="terminal" href="/guides/running-scripts">
+    Full CLI reference with all flags and config file options.
+  </Card>
+</Columns>

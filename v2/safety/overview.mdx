@@ -1,0 +1,191 @@
+---
+title: "Safety overview"
+description: "SafetyCheckerClient, NoOpSafetyChecker, and the connection handler for AERPAW and non-AERPAW environments."
+---
+
+v2 provides two layers of safety: command validation (local checks) and an optional external safety service (`SafetyCheckerClient`) that enforces geofencing and flight rules.
+
+## Safety checkers
+
+### `SafetyCheckerClient`
+
+Async ZMQ client that forwards validation requests to an external `SafetyCheckerServer`. Used in AERPAW environments where a geofence server is running.
+
+```python
+from aerpawlib.v2.safety import SafetyCheckerClient
+
+client = SafetyCheckerClient(addr="192.168.32.25", port=14580)
+```
+
+**Constructor:**
+
+```python
+SafetyCheckerClient(
+    addr: str,
+    port: int,
+    timeout_s: float = <default>,
+)
+```
+
+<ParamField path="addr" type="str" required>
+  Hostname or IP address of the `SafetyCheckerServer`.
+</ParamField>
+
+<ParamField path="port" type="int" required>
+  TCP port the server is listening on (typically `14580`).
+</ParamField>
+
+<ParamField path="timeout_s" type="float">
+  Per-request send/receive timeout in seconds. Defaults to the library constant.
+</ParamField>
+
+**Methods:**
+
+| Method | Description |
+|--------|-------------|
+| `validate_waypoint(current, next_loc)` | Validate a navigation waypoint |
+| `validate_takeoff(altitude, lat, lon)` | Validate a takeoff request |
+| `validate_landing(lat, lon)` | Validate a landing request |
+| `validate_change_speed(new_speed)` | Validate a speed change |
+| `check_server_status()` | Check server health |
+| `close()` | Close ZMQ socket and context |
+
+All validation methods return `Tuple[bool, str]` — `(ok, message)`.
+
+---
+
+### `NoOpSafetyChecker`
+
+Passthrough checker for development and non-AERPAW environments. All validations return `(True, "")` but log a warning on every call.
+
+```python
+from aerpawlib.v2.safety import NoOpSafetyChecker
+
+noop = NoOpSafetyChecker(reason="No safety server configured")
+```
+
+<ParamField path="reason" type="str" required>
+  Human-readable explanation of why the real checker is unavailable. Appears in the warning log.
+</ParamField>
+
+## Passing a checker to `connect()`
+
+The safety checker is passed to `connect()` and stored as `vehicle.safety`. The `can_*` methods on the vehicle use it for external validation.
+
+```python
+from aerpawlib.v2 import Drone
+from aerpawlib.v2.safety import SafetyCheckerClient
+
+client = SafetyCheckerClient("127.0.0.1", 14580)
+drone = await Drone.connect(
+    "udpin://0.0.0.0:14550",
+    safety=client,
+)
+
+# can_* methods now forward to the safety checker
+ok, msg = await drone.can_takeoff(10)
+```
+
+You can also set `vehicle.safety` directly after construction.
+
+Passing `safety=None` (default) disables external validation — `can_*` methods run only local checks.
+
+## CLI: `--safety-checker-port`
+
+When running via the CLI, aerpawlib builds the safety client and passes it to `connect()` automatically.
+
+| Environment | `--safety-checker-port` | Behavior |
+|-------------|------------------------|----------|
+| Non-AERPAW | Not provided | `vehicle.safety = NoOpSafetyChecker(...)` — all validations pass |
+| Non-AERPAW | Provided (e.g. `14580`) | Attempts to connect to `127.0.0.1:<port>`. On failure: uses `NoOpSafetyChecker`, logs the error |
+| AERPAW | Not provided | Defaults to port `14580`. On failure: **crash with critical error** |
+| AERPAW | Provided | Attempts given port. On failure: **crash with critical error** |
+
+```bash
+# Non-AERPAW: optional safety checker
+aerpawlib --api-version v2 --script my_mission.py --vehicle drone --conn udpin://... \
+    --safety-checker-port 14580
+
+# AERPAW: safety checker is required (uses default port 14580)
+aerpawlib --api-version v2 --script my_mission.py --vehicle drone --conn udpin://...
+```
+
+## ConnectionHandler
+
+`ConnectionHandler` monitors the vehicle heartbeat and signals disconnect via an `asyncio.Future`.
+
+```python
+from aerpawlib.v2.safety import ConnectionHandler
+
+handler = ConnectionHandler(
+    vehicle=drone,
+    heartbeat_timeout=10.0,
+    on_disconnect=lambda: print("Connection lost"),
+)
+task = handler.start()
+```
+
+**Constructor:**
+
+```python
+ConnectionHandler(
+    vehicle: VehicleProtocol,
+    heartbeat_timeout: float = <default>,
+    start_delay: float = <default>,
+    on_disconnect: Optional[Callable[[], None]] = None,
+)
+```
+
+<ParamField path="vehicle" type="VehicleProtocol" required>
+  Vehicle to monitor. Any object satisfying `VehicleProtocol` (including `Drone`, `Rover`, `MockVehicle`).
+</ParamField>
+
+<ParamField path="heartbeat_timeout" type="float">
+  Seconds without telemetry before a disconnect is declared.
+</ParamField>
+
+<ParamField path="start_delay" type="float">
+  Grace period at startup before timeout checks begin. Prevents false disconnects during initial connection.
+</ParamField>
+
+<ParamField path="on_disconnect" type="Callable[[], None] | None" default="None">
+  Optional callback invoked when heartbeat is lost.
+</ParamField>
+
+**Key methods:**
+
+| Method | Description |
+|--------|-------------|
+| `start()` | Start the background monitor task |
+| `heartbeat_tick()` | Record receipt of telemetry (called by the vehicle) |
+| `get_disconnect_future()` | Return a `Future` that raises `HeartbeatLostError` on disconnect |
+| `stop()` | Cancel the monitor |
+
+<Note>
+In normal usage you do not need to create a `ConnectionHandler` manually. The aerpawlib CLI creates and manages it automatically when running a mission.
+</Note>
+
+## PreflightChecks
+
+Static preflight checks run before arm/takeoff:
+
+```python
+from aerpawlib.v2.safety import PreflightChecks
+
+# Check GPS 3D fix
+ok = PreflightChecks.check_gps_fix(drone)
+
+# Check battery level
+ok = PreflightChecks.check_battery(drone, min_percent=20.0)
+
+# Run all checks
+all_ok = await PreflightChecks.run_all(drone)
+if not all_ok:
+    print("Preflight failed")
+```
+
+| Method | Checks |
+|--------|--------|
+| `check_gps_fix(vehicle)` | `gps.fix_type >= 3` |
+| `check_battery(vehicle, min_percent=10.0)` | `battery.level >= min_percent` |
+| `run_all(vehicle)` | GPS fix and battery |

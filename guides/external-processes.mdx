@@ -1,0 +1,186 @@
+---
+title: "External processes"
+description: "Spawn and interact with external programs from within your mission script using ExternalProcess."
+---
+
+`ExternalProcess` lets your mission script launch and communicate with external programs — radio experiment scripts, sensor readers, ping utilities, or any other tool that reads from stdin and writes to stdout.
+
+## Why use ExternalProcess
+
+Mission scripts are single-process asyncio programs. `ExternalProcess` wraps `asyncio.create_subprocess_shell` (v1) or `asyncio.create_subprocess_exec` (v2), giving you an async interface to:
+
+- Start a child process
+- Read its stdout line by line
+- Write to its stdin
+- Wait for a specific output pattern
+- Wait for the process to terminate
+
+This is used in the ZMQ leader example to call `ping` and measure network latency without blocking the state machine.
+
+## Import
+
+```python
+# v1
+from aerpawlib.v1.external import ExternalProcess
+
+# v2
+from aerpawlib.v2.external import ExternalProcess
+```
+
+Both versions share the same public API.
+
+## API reference
+
+### ExternalProcess(executable, params, stdin, stdout)
+
+Prepares the process but does not start it.
+
+```python
+proc = ExternalProcess(
+    executable="my_radio_script.py",
+    params=["--frequency", "900"],
+    # stdin="input.txt",   # optional: redirect stdin from a file
+    # stdout="output.txt", # optional: redirect stdout to a file
+)
+```
+
+| Argument | Type | Description |
+|---|---|---|
+| `executable` | `str` | Command or executable path |
+| `params` | `List[str]` | Command-line arguments |
+| `stdin` | `str \| None` | File path for stdin redirection. If `None`, stdin is a pipe. |
+| `stdout` | `str \| None` | File path for stdout redirection. If `None`, stdout is a pipe. |
+
+### start()
+
+Starts the process asynchronously:
+
+```python
+await proc.start()
+```
+
+### read_line()
+
+Reads one line from stdout. Returns `None` if the process has ended or stdout is redirected to a file:
+
+```python
+line = await proc.read_line()
+if line is not None:
+    print(f"Got: {line}")
+```
+
+### send_input(data)
+
+Writes a string to the process's stdin:
+
+```python
+await proc.send_input("start_measurement\n")
+```
+
+Raises `RuntimeError` if stdin is not available (e.g. redirected to a file).
+
+### wait_until_output(output_regex)
+
+Blocks until a stdout line matches the given regular expression, then returns all lines collected up to and including the matching line:
+
+```python
+lines = await proc.wait_until_output(r"measurement_complete")
+# lines = ["...", "...", "measurement_complete: value=42"]
+```
+
+Returns the collected buffer if the process exits before a match is found.
+
+### wait_until_terminated()
+
+Blocks until the process exits:
+
+```python
+await proc.wait_until_terminated()
+```
+
+## Examples
+
+### Measuring ping latency
+
+This pattern appears in the ZMQ leader example to measure round-trip latency during the mission:
+
+```python
+import re
+from aerpawlib.v1.external import ExternalProcess
+
+_ping_regex = re.compile(
+    r".+icmp_seq=(?P<seq>\d+).+time=(?P<time>\d\.\d+) ms"
+)
+
+async def ping_latency(address: str, count: int) -> float:
+    ping = ExternalProcess("ping", params=["-c", str(count), address])
+    await ping.start()
+    latencies = []
+    buff = 1
+    while buff:
+        buff = await ping.wait_until_output(r"icmp_seq=")
+        if not buff:
+            break
+        m = _ping_regex.match(buff[-1])
+        if m is None:
+            continue
+        latencies.append(float(m.group("time")))
+        if m.group("seq") == str(count):
+            break
+    if not latencies:
+        raise RuntimeError(f"No ping responses from {address}")
+    return sum(latencies) / len(latencies)
+```
+
+### Running a radio script
+
+```python
+from aerpawlib.v1.external import ExternalProcess
+
+class RadioMission(BasicRunner):
+    @entrypoint
+    async def run(self, vehicle):
+        await vehicle.takeoff(10)
+
+        # Start radio script in background
+        radio = ExternalProcess("python3", params=["radio_experiment.py"])
+        await radio.start()
+
+        # Wait for the radio script to signal it is ready
+        await radio.wait_until_output(r"ready")
+
+        # Navigate to measurement point
+        await vehicle.goto_coordinates(target)
+
+        # Trigger measurement
+        await radio.send_input("measure\n")
+
+        # Collect result
+        lines = await radio.wait_until_output(r"result:")
+        result_line = next((l for l in lines if "result:" in l), None)
+        print(f"Radio measurement: {result_line}")
+
+        # Wait for the script to finish
+        await radio.wait_until_terminated()
+
+        await vehicle.land()
+```
+
+### Reading sensor output
+
+```python
+from aerpawlib.v1.external import ExternalProcess
+
+sensor = ExternalProcess("sensor_reader", params=["--port", "/dev/ttyUSB1"])
+await sensor.start()
+
+for _ in range(10):
+    line = await sensor.read_line()
+    print(f"Sensor: {line}")
+
+await sensor.wait_until_terminated()
+```
+
+<Note>
+  If you redirect stdout to a file (`stdout="output.txt"`), `read_line()` and `wait_until_output()` will always return `None` / an empty buffer because the output goes to the file instead of the pipe.
+</Note>

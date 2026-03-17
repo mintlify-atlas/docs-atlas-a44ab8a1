@@ -1,0 +1,137 @@
+---
+title: "Geofence utilities"
+description: "Parse KML geofence polygons and test whether points or paths fall inside them."
+---
+
+The geofence utilities parse KML polygon files and provide point-in-polygon and segment-intersection tests.
+
+## Functions
+
+### `read_geofence(file_path)`
+
+```python
+def read_geofence(file_path: str) -> List[dict]
+```
+
+Parse a KML file and return the polygon boundary as a list of latitude/longitude points.
+
+Searches the document for the first `Polygon/outerBoundaryIs/LinearRing/coordinates` element and parses its coordinate string. Works with any nesting depth (folders, multiple Placemarks, etc.).
+
+<ParamField path="file_path" type="str" required>
+  Path to the KML file.
+</ParamField>
+
+<ResponseField name="returns" type="List[dict]">
+  List of `{"lat": float, "lon": float}` dicts representing the polygon vertices in order.
+</ResponseField>
+
+**Raises:** `ValueError` if no `LinearRing` polygon is found in the KML.
+
+```python
+from aerpawlib.v2 import read_geofence
+
+polygon = read_geofence("flight_area.kml")
+print(polygon[0])  # {'lat': 35.727, 'lon': -78.696}
+```
+
+---
+
+### `inside(lon, lat, geofence)`
+
+```python
+def inside(lon: float, lat: float, geofence: List[dict]) -> bool
+```
+
+Test whether a point is inside a polygon using the ray-casting algorithm. Handles degenerate (horizontal) edges safely.
+
+<ParamField path="lon" type="float" required>
+  Longitude of the point to test.
+</ParamField>
+
+<ParamField path="lat" type="float" required>
+  Latitude of the point to test.
+</ParamField>
+
+<ParamField path="geofence" type="List[dict]" required>
+  Polygon as returned by `read_geofence` — a list of `{"lat": ..., "lon": ...}` dicts. Must have at least 3 vertices.
+</ParamField>
+
+<ResponseField name="returns" type="bool">
+  `True` if the point is inside the polygon.
+</ResponseField>
+
+```python
+from aerpawlib.v2 import read_geofence, inside
+
+polygon = read_geofence("flight_area.kml")
+if not inside(lon=drone.position.lon, lat=drone.position.lat, geofence=polygon):
+    print("Vehicle is outside the geofence")
+```
+
+---
+
+### `do_intersect(px, py, qx, qy, rx, ry, sx, sy)`
+
+```python
+def do_intersect(
+    px: float, py: float,
+    qx: float, qy: float,
+    rx: float, ry: float,
+    sx: float, sy: float,
+) -> bool
+```
+
+Return `True` if line segment PQ intersects line segment RS. Endpoints that touch are considered intersecting.
+
+<ParamField path="px" type="float" required>X coordinate of P (start of first segment).</ParamField>
+<ParamField path="py" type="float" required>Y coordinate of P.</ParamField>
+<ParamField path="qx" type="float" required>X coordinate of Q (end of first segment).</ParamField>
+<ParamField path="qy" type="float" required>Y coordinate of Q.</ParamField>
+<ParamField path="rx" type="float" required>X coordinate of R (start of second segment).</ParamField>
+<ParamField path="ry" type="float" required>Y coordinate of R.</ParamField>
+<ParamField path="sx" type="float" required>X coordinate of S (end of second segment).</ParamField>
+<ParamField path="sy" type="float" required>Y coordinate of S.</ParamField>
+
+<ResponseField name="returns" type="bool">
+  `True` if the two segments intersect.
+</ResponseField>
+
+```python
+from aerpawlib.v2 import do_intersect
+
+# Check if a planned path crosses a boundary edge
+path_crosses = do_intersect(
+    current.lon, current.lat,   # PQ: planned path
+    target.lon, target.lat,
+    boundary[0]["lon"], boundary[0]["lat"],  # RS: boundary edge
+    boundary[1]["lon"], boundary[1]["lat"],
+)
+if path_crosses:
+    print("Planned path exits the geofence")
+```
+
+## Typical workflow
+
+```python
+from aerpawlib.v2 import read_geofence, inside, do_intersect, Coordinate
+
+# Load fence
+fence = read_geofence("fence.kml")
+
+# Check current position
+pos = drone.position
+if not inside(pos.lon, pos.lat, fence):
+    await drone.return_to_launch()
+    return
+
+# Check if planned route stays inside
+waypoints = [Coordinate(35.728, -78.696, 20), Coordinate(35.729, -78.695, 20)]
+for i in range(len(waypoints) - 1):
+    a, b = waypoints[i], waypoints[i + 1]
+    for j in range(len(fence)):
+        p = fence[j]
+        q = fence[(j + 1) % len(fence)]
+        if do_intersect(a.lon, a.lat, b.lon, b.lat, p["lon"], p["lat"], q["lon"], q["lat"]):
+            print(f"Waypoint segment {i}->{i+1} exits fence boundary")
+            break
+```

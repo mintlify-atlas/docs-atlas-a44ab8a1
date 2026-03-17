@@ -1,0 +1,626 @@
+---
+title: "v1 examples"
+description: "Runnable v1 API examples covering BasicRunner, StateMachine, background logging, and multi-vehicle ZMQ coordination."
+---
+
+All examples below use the stable v1 API (`aerpawlib.v1.*`). Each accordion contains the full source code and the CLI command to run it.
+
+<Note>
+  Run v1 examples with `--api-version v1`. The `--conn` flag accepts any MAVSDK connection string — use `udp://127.0.0.1:14550` for SITL.
+</Note>
+
+## BasicRunner examples
+
+<AccordionGroup>
+  <Accordion title="Basic runner — minimal takeoff, fly north, land">
+    The simplest possible script: a `BasicRunner` subclass with a single `@entrypoint` method. Takes off to 10 m, flies 10 m north, then lands.
+
+    ```bash
+    aerpawlib --api-version v1 --script examples/v1/basic_runner.py \
+        --vehicle drone --conn udp://127.0.0.1:14550
+    ```
+
+    ```python basic_runner.py
+    """
+    Example of a script that has a single entry point that doesn't use any kind of
+    special Runner.
+    """
+
+    from aerpawlib.v1.runner import BasicRunner, entrypoint
+    from aerpawlib.v1.util import VectorNED
+    from aerpawlib.v1.vehicle import Drone
+
+
+    class MyScript(BasicRunner):
+        @entrypoint
+        async def do_stuff(self, drone: Drone):
+            # take off to 10m
+            await drone.takeoff(10)
+
+            # fly north 10m
+            await drone.goto_coordinates(drone.position + VectorNED(10, 0))
+
+            # land
+            await drone.land()
+    ```
+  </Accordion>
+
+  <Accordion title="Square flight — 10 m × 10 m square pattern">
+    Flies a 10 m × 10 m square: North → East → South → West → home, then lands. Demonstrates `VectorNED` offsets and sequential `goto_coordinates` calls.
+
+    ```bash
+    aerpawlib --api-version v1 --script examples/v1/basic_example.py \
+        --vehicle drone --conn udp://127.0.0.1:14550
+    ```
+
+    ```python basic_example.py
+    """
+    Basic v1 API Example - Square Pattern Flight
+
+    This script demonstrates the v1 API with a simple mission:
+    1. Take off to 10 meters
+    2. Fly in a square pattern (10m x 10m)
+    3. Return to start and land
+
+    Run with:
+        aerpawlib --api-version v1 --script examples/v1/basic_example.py \\
+            --vehicle drone --conn udp:127.0.0.1:14550
+    """
+
+    from aerpawlib.v1.runner import BasicRunner, entrypoint
+    from aerpawlib.v1.util import VectorNED
+    from aerpawlib.v1.vehicle import Drone
+
+
+    class SquareFlight(BasicRunner):
+        """Fly in a square pattern."""
+
+        @entrypoint
+        async def run(self, drone: Drone):
+            # Configuration
+            takeoff_altitude = 10  # meters
+            square_size = 10  # meters
+
+            print(f"[example] Starting square flight mission")
+            print(f"[example] Takeoff altitude: {takeoff_altitude}m")
+            print(f"[example] Square size: {square_size}m x {square_size}m")
+
+            # Take off
+            print(f"[example] Taking off to {takeoff_altitude}m...")
+            await drone.takeoff(takeoff_altitude)
+            print(
+                f"[example] Takeoff complete, altitude: {drone.position.alt:.1f}m"
+            )
+
+            # Save starting position
+            start_position = drone.position
+            print(f"[example] Start position: {start_position}")
+
+            # Fly square pattern: North -> East -> South -> West -> Back to start
+            waypoints = [
+                ("North", VectorNED(square_size, 0, 0)),
+                ("East", VectorNED(0, square_size, 0)),
+                ("South", VectorNED(-square_size, 0, 0)),
+                ("West", VectorNED(0, -square_size, 0)),
+            ]
+
+            current_position = start_position
+            for direction, offset in waypoints:
+                target = current_position + offset
+                print(f"[example] Flying {direction} to {target}")
+                await drone.goto_coordinates(target)
+                current_position = target
+                print(f"[example] Arrived at {direction} waypoint")
+
+            # Return to start position
+            print(f"[example] Returning to start position...")
+            await drone.goto_coordinates(start_position)
+            print(f"[example] Back at start position")
+
+            # Land
+            print(f"[example] Landing...")
+            await drone.land()
+            print(f"[example] Mission complete!")
+    ```
+  </Accordion>
+
+  <Accordion title="Figure-8 — configurable radius and altitude">
+    Flies a figure-8 pattern made up of two circular loops. Accepts `--radius` and `--altitude` arguments via `initialize_args`. Uses `Coordinate` math to generate evenly spaced waypoints per loop.
+
+    ```bash
+    aerpawlib --api-version v1 --script examples/v1/figure_eight.py \
+        --vehicle drone --conn udp://127.0.0.1:14550 \
+        --radius 20 --altitude 15
+    ```
+
+    ```python figure_eight.py
+    """
+    v1 API Example - Figure 8 Pattern
+
+    This script demonstrates complex flight patterns using coordinate math.
+    Flies a figure-8 pattern using waypoints.
+
+    Run with:
+        aerpawlib --api v1 --script examples/v1/figure_eight.py \\
+            --vehicle drone --conn udp:127.0.0.1:14550
+    """
+
+    import math
+    from argparse import ArgumentParser
+    from typing import List
+
+    from aerpawlib.v1.runner import BasicRunner, entrypoint
+    from aerpawlib.v1.util import VectorNED, Coordinate
+    from aerpawlib.v1.vehicle import Drone
+
+    # Configuration
+    FLIGHT_ALT = 15  # meters
+    LOOP_RADIUS = 20  # meters (radius of each loop)
+    NUM_WAYPOINTS = 16  # points per loop
+
+
+    class FigureEight(BasicRunner):
+        """Fly a figure-8 pattern."""
+
+        _radius: float = LOOP_RADIUS
+        _altitude: float = FLIGHT_ALT
+        _waypoints_per_loop: int = NUM_WAYPOINTS
+
+        def initialize_args(self, extra_args: List[str]):
+            """Parse custom arguments."""
+            parser = ArgumentParser()
+            parser.add_argument(
+                "--radius",
+                type=float,
+                default=LOOP_RADIUS,
+                help="Loop radius in meters",
+            )
+            parser.add_argument(
+                "--altitude",
+                type=float,
+                default=FLIGHT_ALT,
+                help="Flight altitude in meters",
+            )
+            args, _ = parser.parse_known_args(extra_args)
+
+            self._radius = args.radius
+            self._altitude = args.altitude
+            print(
+                f"[example] Figure-8 config: radius={self._radius}m, alt={self._altitude}m"
+            )
+
+        def _generate_figure_8_waypoints(
+            self, center: Coordinate
+        ) -> List[Coordinate]:
+            """Generate waypoints for a figure-8 pattern."""
+            waypoints = []
+
+            # First loop (north of center)
+            loop1_center = center + VectorNED(self._radius, 0, 0)
+            for i in range(self._waypoints_per_loop):
+                angle = (2 * math.pi * i) / self._waypoints_per_loop
+                offset = VectorNED(
+                    self._radius * math.cos(angle),
+                    self._radius * math.sin(angle),
+                    0,
+                )
+                waypoints.append(loop1_center + offset)
+
+            # Second loop (south of center, traced in opposite direction)
+            loop2_center = center + VectorNED(-self._radius, 0, 0)
+            for i in range(self._waypoints_per_loop):
+                # Reverse direction for second loop
+                angle = -(2 * math.pi * i) / self._waypoints_per_loop
+                offset = VectorNED(
+                    self._radius * math.cos(angle),
+                    self._radius * math.sin(angle),
+                    0,
+                )
+                waypoints.append(loop2_center + offset)
+
+            return waypoints
+
+        @entrypoint
+        async def run(self, drone: Drone):
+            """Execute the figure-8 pattern."""
+            print(f"[example] Taking off to {self._altitude}m...")
+            await drone.takeoff(self._altitude)
+
+            center = drone.position
+            print(f"[example] Center position: {center}")
+
+            # Generate waypoints
+            waypoints = self._generate_figure_8_waypoints(center)
+            print(f"[example] Generated {len(waypoints)} waypoints")
+
+            # Fly the pattern
+            for i, wp in enumerate(waypoints):
+                # Set altitude
+                target = Coordinate(wp.lat, wp.lon, self._altitude)
+
+                # Calculate progress
+                loop_num = 1 if i < self._waypoints_per_loop else 2
+                wp_in_loop = i % self._waypoints_per_loop + 1
+
+                print(
+                    f"[example] Loop {loop_num}, waypoint {wp_in_loop}/{self._waypoints_per_loop}"
+                )
+                await drone.goto_coordinates(target, tolerance=2)
+
+            # Return to center
+            print("[example] Returning to center...")
+            await drone.goto_coordinates(center, tolerance=2)
+
+            # Land
+            print("[example] Landing...")
+            await drone.land()
+            print("[example] Figure-8 complete!")
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## StateMachine examples
+
+<AccordionGroup>
+  <Accordion title="Square off with logging — StateMachine + @background CSV logging">
+    Demonstrates `StateMachine` with a `@background` task running in parallel to log vehicle position to a CSV file. Uses `@timed_state` for waypoint dwell time and dynamic state transitions based on a leg counter. Works with both drones (takeoff/land) and rovers (ground navigation).
+
+    ```bash
+    aerpawlib --script examples/v1/squareoff_logging.py \
+        --vehicle drone --conn udp://127.0.0.1:14550 \
+        --output gps_log.csv --samplerate 2
+    ```
+
+    ```python squareoff_logging.py
+    from argparse import ArgumentParser
+    import asyncio
+    import csv
+    import datetime
+    import time
+    from typing import List, TextIO
+    import os
+
+    from aerpawlib.v1.runner import StateMachine, state, background, timed_state
+    from aerpawlib.v1.util import VectorNED
+    from aerpawlib.v1.vehicle import Drone, Rover, Vehicle
+
+    FLIGHT_ALT = 5  # m
+    SQUARE_SIZE = 10  # m
+    LOCATION_TOLERANCE = (
+        2  # m -- ~2 is safe in general, use 3 for the rover in SITL
+    )
+    WAIT_TIME = 5  # s
+    LEG_VELOCITY = 5  # m/s
+
+
+    def _dump_to_csv(vehicle: Vehicle, line_num: int, writer):
+        pos = vehicle.position
+        lat, lon, alt = pos.lat, pos.lon, pos.alt
+        volt = vehicle.battery.voltage
+        timestamp = datetime.datetime.now()
+        gps = vehicle.gps
+        fix, num_sat = gps.fix_type, gps.satellites_visible
+        if fix < 2:
+            lat, lon, alt = -999, -999, -999
+        vel = vehicle.velocity
+        attitude = vehicle.attitude
+        attitude_str = (
+            "("
+            + ",".join(map(str, [attitude.pitch, attitude.yaw, attitude.roll]))
+            + ")"
+        )
+        writer.writerow(
+            [
+                line_num,
+                lon,
+                lat,
+                alt,
+                attitude_str,
+                vel,
+                volt,
+                timestamp,
+                fix,
+                num_sat,
+            ]
+        )
+
+
+    class SquareOff(StateMachine):
+        _next_sample: float = 0
+        _sampling_delay: float
+        _cur_line: int
+        _csv_writer: object
+        _log_file: TextIO
+
+        def initialize_args(self, extra_args: List[str]):
+            default_file = f"GPS_DATA_{datetime.datetime.now().strftime('%Y-%m-%d_%H:%M:%S')}.csv"
+
+            parser = ArgumentParser()
+            parser.add_argument(
+                "--output",
+                help="log output file",
+                required=False,
+                default=default_file,
+            )
+            parser.add_argument(
+                "--samplerate",
+                help="log sampling rate (Hz)",
+                required=False,
+                default=1,
+                type=float,
+            )
+            args = parser.parse_args(args=extra_args)
+
+            self._sampling_delay = 1 / args.samplerate
+            self._log_file = open(args.output, "a+")
+            self._log_file.seek(0)
+            self._cur_line = sum(1 for _ in self._log_file) + 1
+            self._log_file.seek(0, 2)  # Seek back to end for appending
+            self._csv_writer = csv.writer(self._log_file)
+
+        @background
+        async def periodic_dump(self, vehicle: Vehicle):
+            self._next_sample = time.time() + self._sampling_delay
+            _dump_to_csv(vehicle, self._cur_line, self._csv_writer)
+            self._log_file.flush()
+            os.fsync(self._log_file.fileno())
+            self._cur_line += 1
+            await asyncio.sleep(self._sampling_delay)
+
+        def cleanup(self):
+            self._log_file.close()
+
+        _legs = ["leg_north", "leg_west", "leg_south", "leg_east"]
+        _current_leg = 0
+
+        @state(name="start", first=True)
+        async def start(self, vehicle: Vehicle):
+            if isinstance(vehicle, Drone):
+                return "take_off"
+            elif isinstance(vehicle, Rover):
+                return self._legs[self._current_leg]
+            raise Exception("Vehicle not supported")
+
+        @state(name="take_off")
+        async def take_off(self, drone: Drone):
+            print("taking off")
+            await drone.takeoff(FLIGHT_ALT)
+            print("taken off")
+            await drone.set_groundspeed(LEG_VELOCITY)
+            return "leg_north"
+
+        @timed_state(name="at_position", duration=WAIT_TIME)
+        async def at_position(self, _):
+            self._current_leg += 1
+            if self._current_leg < len(self._legs):
+                return self._legs[self._current_leg]
+            return "finish"
+
+        async def command_leg(self, vehicle: Vehicle, dNorth: float, dEast: float):
+            await vehicle.goto_coordinates(
+                vehicle.position + VectorNED(dNorth, dEast),
+                tolerance=LOCATION_TOLERANCE,
+            )
+
+        @state(name="leg_north")
+        async def leg_north(self, vehicle: Vehicle):
+            print("heading north")
+            await self.command_leg(vehicle, SQUARE_SIZE, 0)
+            return "at_position"
+
+        @state(name="leg_west")
+        async def leg_west(self, vehicle: Vehicle):
+            print("heading west")
+            await self.command_leg(vehicle, 0, -SQUARE_SIZE)
+            return "at_position"
+
+        @state(name="leg_south")
+        async def leg_south(self, vehicle: Vehicle):
+            print("heading south")
+            await self.command_leg(vehicle, -SQUARE_SIZE, 0)
+            return "at_position"
+
+        @state(name="leg_east")
+        async def leg_east(self, vehicle: Vehicle):
+            print("heading east")
+            await self.command_leg(vehicle, 0, SQUARE_SIZE)
+            return "at_position"
+
+        @state(name="finish")
+        async def finish(self, vehicle: Vehicle):
+            if isinstance(vehicle, Drone):
+                return "land"
+            elif isinstance(vehicle, Rover):
+                print("done!")
+
+        @state(name="land")
+        async def land(self, drone: Drone):
+            await drone.land()
+            print("done!")
+    ```
+  </Accordion>
+</AccordionGroup>
+
+## ZMQ leader/follower
+
+This pair of scripts demonstrates coordinated multi-vehicle operation over ZMQ. The leader pings a remote host, then commands the follower to take off, fly to a waypoint, return home, and land — all via `transition_runner` calls.
+
+<Warning>
+  Start the ZMQ proxy (`aerpawlib --run-proxy`) in a separate terminal before launching either script. Each vehicle needs a unique `--zmq-identifier`.
+</Warning>
+
+```bash
+# Terminal 1 — ZMQ proxy
+aerpawlib --run-proxy
+
+# Terminal 2 — leader
+aerpawlib --script examples/v1/zmq_runner/leader.py \
+    --conn udp://127.0.0.1:14550 --vehicle drone \
+    --zmq-identifier leader --zmq-proxy-server 127.0.0.1
+
+# Terminal 3 — follower
+aerpawlib --script examples/v1/zmq_runner/follower.py \
+    --conn udp://127.0.0.1:14551 --vehicle drone \
+    --zmq-identifier follower --zmq-proxy-server 127.0.0.1
+```
+
+<AccordionGroup>
+  <Accordion title="Leader script">
+    The leader waits 10 seconds, pings a target IP for latency, commands the follower to take off, waits for the follower to reach its waypoint, then pings again and commands the follower home and to land.
+
+    ```python leader.py
+    # leader script
+
+    import re
+
+    from aerpawlib.v1.runner import (
+        ZmqStateMachine,
+        at_init,
+        background,
+        in_background,
+        sleep,
+        state,
+        timed_state,
+    )
+    from aerpawlib.v1.util import Coordinate, Waypoint, read_from_plan_complete
+    from aerpawlib.v1.vehicle import Drone
+
+    from aerpawlib.v1.external import ExternalProcess
+
+    target_ip = "127.0.0.1"
+
+
+    class LeaderRunner(ZmqStateMachine):
+        _ping_regex = re.compile(
+            r".+icmp_seq=(?P<seq>\d+).+time=(?P<time>\d\.\d+) ms"
+        )
+
+        async def _ping_latency(self, address: str, count: int):
+            ping = ExternalProcess("ping", params=["-c", str(count), address])
+            await ping.start()
+            latencies = []
+            buff = 1
+            while buff:
+                buff = await ping.wait_until_output(r"icmp_seq=")
+                if not buff:
+                    break
+                ping_re_match = self._ping_regex.match(buff[-1])
+                if ping_re_match is None:
+                    continue
+                latencies.append(float(ping_re_match.group("time")))
+                if ping_re_match.group("seq") == str(count):
+                    break
+            if not latencies:
+                raise RuntimeError(
+                    f"Ping to {address} produced no parseable output"
+                )
+            return sum(latencies) / len(latencies)
+
+        @state(name="launch", first=True)
+        async def state_start(self, _):
+            print("waiting to start")
+            await sleep(10)
+            return "start_ping"
+
+        @state(name="start_ping")
+        async def state_start_ping(self, _):
+            p = await self._ping_latency(target_ip, 5)
+            print(f"ping_result: {p}")
+            await self.transition_runner("follower", "takeoff")
+            return "wait_for_waypoint"
+
+        @state(name="wait_for_waypoint")
+        async def state_wait_waypoint(self, _):
+            return "wait_for_waypoint"
+
+        @state(name="waypoint_ping")
+        async def state_ping_waypoint(self, _):
+            p = await self._ping_latency(target_ip, 5)
+            print(f"ping_result: {p}")
+            await self.transition_runner("follower", "rtl")
+            return "wait_for_rtl"
+
+        @state(name="wait_for_rtl")
+        async def state_wait_rtl(self, _):
+            return "wait_for_rtl"
+
+        @state(name="last_ping")
+        async def state_last_ping(self, _):
+            p = await self._ping_latency(target_ip, 5)
+            print(f"ping_result: {p}")
+            await self.transition_runner("follower", "land")
+            return
+    ```
+  </Accordion>
+
+  <Accordion title="Follower script">
+    The follower starts in a waiting loop until the leader sends a `takeoff` transition. It then takes off, flies 20 m north, notifies the leader it has arrived at the waypoint, and waits for the `rtl` and `land` transitions.
+
+    ```python follower.py
+    # follower script
+
+    from aerpawlib.v1.runner import (
+        ZmqStateMachine,
+        at_init,
+        background,
+        in_background,
+        sleep,
+        state,
+        timed_state,
+    )
+    from aerpawlib.v1.util import (
+        Coordinate,
+        VectorNED,
+        Waypoint,
+        read_from_plan_complete,
+    )
+    from aerpawlib.v1.vehicle import Drone
+
+    from aerpawlib.v1.external import ExternalProcess
+
+
+    class FollowRunner(ZmqStateMachine):
+        @state(name="launch_wait", first=True)
+        async def state_start(self, _):
+            return "launch_wait"
+
+        @state(name="takeoff")
+        async def state_takeoff(self, drone):
+            print("taking off")
+            await drone.takeoff(10)
+            print("taken off")
+            return "fly_to_waypoint"
+
+        @state(name="fly_to_waypoint")
+        async def state_waypoint(self, drone):
+            await drone.goto_coordinates(drone.position + VectorNED(20, 0))
+            await sleep(5)
+            await self.transition_runner("leader", "waypoint_ping")
+            return "waypoint_wait"
+
+        @state(name="waypoint_wait")
+        async def state_wait_waypoint(self, _):
+            return "waypoint_wait"
+
+        @state(name="rtl")
+        async def state_rtl(self, drone):
+            home_coords = Coordinate(
+                drone.home_coords.lat, drone.home_coords.lon, drone.position.alt
+            )
+            await drone.goto_coordinates(home_coords)
+            await sleep(5)
+            await self.transition_runner("leader", "last_ping")
+            return "wait_last_ping"
+
+        @state("wait_last_ping")
+        async def state_wait_last_ping(self, _):
+            return "wait_last_ping"
+
+        @state("land")
+        async def state_land(self, drone):
+            await drone.land()
+            print("done!")
+            return
+    ```
+  </Accordion>
+</AccordionGroup>

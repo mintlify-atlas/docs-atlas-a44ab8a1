@@ -1,0 +1,135 @@
+---
+title: 'v1 API overview'
+description: 'MAVSDK-based vehicle control API with full backward compatibility for legacy aerpawlib scripts.'
+---
+
+The v1 API is a stable, **MAVSDK-based** implementation of the original aerpawlib interface. It replaces the legacy DroneKit backend while keeping every class, method, and property identical — existing scripts continue to work without modification.
+
+<Note>
+v1 is a stopgap designed for backward compatibility. New projects should target the v2 API once it is available.
+</Note>
+
+## Import patterns
+
+All public symbols are available from the `aerpawlib.v1` namespace:
+
+```python
+from aerpawlib.v1 import Drone, Rover, Coordinate, VectorNED
+from aerpawlib.v1 import BasicRunner, StateMachine, ZmqStateMachine
+from aerpawlib.v1 import entrypoint, state, timed_state, background
+from aerpawlib.v1 import SafetyCheckerClient, SafetyCheckerServer
+from aerpawlib.v1 import read_from_plan, read_geofence, inside
+from aerpawlib.v1 import run_zmq_proxy, check_zmq_proxy_reachable
+```
+
+Legacy imports still work but are deprecated:
+
+```python
+# Deprecated — use aerpawlib.v1 for new code
+from aerpawlib import Drone, Coordinate, BasicRunner, entrypoint
+```
+
+## Public exports
+
+### Vehicles
+
+| Symbol | Description |
+|---|---|
+| `Vehicle` | Base vehicle class |
+| `Drone` | Multirotor with takeoff, land, and velocity control |
+| `Rover` | Ground vehicle with 2D navigation |
+| `DummyVehicle` | No-op vehicle for scripts that need no hardware |
+
+### Runners
+
+| Symbol | Description |
+|---|---|
+| `BasicRunner` | Single-entrypoint execution model |
+| `StateMachine` | State-transition execution model |
+| `ZmqStateMachine` | StateMachine with ZMQ remote control |
+| `entrypoint` | Decorator for `BasicRunner` entry point |
+| `state` | Decorator to define a named state |
+| `timed_state` | Decorator for a fixed-duration state |
+| `background` | Decorator for parallel background tasks |
+| `at_init` | Decorator for pre-arm initialization tasks |
+
+### Types
+
+| Symbol | Description |
+|---|---|
+| `Coordinate` | WGS84 geographic position |
+| `VectorNED` | 3D velocity/displacement in North-East-Down frame |
+
+### Utilities
+
+| Symbol | Description |
+|---|---|
+| `read_from_plan` | Parse a QGroundControl `.plan` file |
+| `read_from_plan_complete` | Parse `.plan` file with full waypoint detail |
+| `get_location_from_waypoint` | Extract `Coordinate` from a waypoint tuple |
+| `read_geofence` | Parse a KML file into a polygon |
+| `inside` | Point-in-polygon test |
+| `do_intersect` | Line segment intersection test |
+| `run_zmq_proxy` | Start a ZMQ forwarder proxy |
+| `check_zmq_proxy_reachable` | Connectivity check for the ZMQ proxy |
+
+### Safety
+
+| Symbol | Description |
+|---|---|
+| `SafetyCheckerServer` | Validates commands against geofence config |
+| `SafetyCheckerClient` | Sends validation requests to the server |
+
+## Requirements
+
+- Python 3.9 or later
+- `mavsdk` — `pip install mavsdk`
+- `pyzmq` — `pip install pyzmq` (required for ZMQ features and safety checker)
+- `pykml` — `pip install pykml` (required for KML geofence parsing)
+
+## Sections
+
+<CardGroup cols={2}>
+  <Card title="Connecting vehicles" icon="plug" href="/v1/connection">
+    Connection string formats and how to connect via CLI or code.
+  </Card>
+  <Card title="Drone" icon="plane" href="/v1/vehicles/drone">
+    Takeoff, land, goto, heading, and velocity control.
+  </Card>
+  <Card title="Rover" icon="car" href="/v1/vehicles/rover">
+    2D ground navigation and velocity control.
+  </Card>
+  <Card title="DummyVehicle" icon="box" href="/v1/vehicles/dummy-vehicle">
+    Placeholder vehicle for scripts that need no hardware.
+  </Card>
+  <Card title="BasicRunner" icon="play" href="/v1/runners/basic-runner">
+    Single entry-point script execution.
+  </Card>
+  <Card title="StateMachine" icon="diagram-project" href="/v1/runners/state-machine">
+    State-transition execution with background tasks.
+  </Card>
+  <Card title="ZmqStateMachine" icon="network-wired" href="/v1/runners/zmq-state-machine">
+    Remote-controllable state machine over ZMQ.
+  </Card>
+  <Card title="Coordinate" icon="location-dot" href="/v1/types/coordinate">
+    WGS84 geographic position type.
+  </Card>
+  <Card title="VectorNED" icon="arrows-up-down-left-right" href="/v1/types/vector-ned">
+    North-East-Down displacement and velocity type.
+  </Card>
+  <Card title="Plan files" icon="file" href="/v1/utilities/plan-files">
+    Read waypoints from QGroundControl `.plan` files.
+  </Card>
+  <Card title="Geofence utilities" icon="draw-polygon" href="/v1/utilities/geofence">
+    KML parsing and point-in-polygon checks.
+  </Card>
+  <Card title="ZMQ utilities" icon="tower-broadcast" href="/v1/utilities/zmq">
+    Proxy setup and connectivity helpers.
+  </Card>
+  <Card title="Safety checker" icon="shield-halved" href="/v1/safety/safety-checker">
+    Geofence validation server and client.
+  </Card>
+  <Card title="Architecture and tradeoffs" icon="gears" href="/v1/safety/architecture">
+    Dual-loop design and MAVSDK integration notes.
+  </Card>
+</CardGroup>

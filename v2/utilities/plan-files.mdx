@@ -1,0 +1,146 @@
+---
+title: "Plan files"
+description: "Parse QGroundControl .plan files into waypoint lists for autonomous missions."
+---
+
+The plan file utilities parse QGroundControl `.plan` files (JSON format) into Python lists that can be iterated and used with vehicle commands.
+
+## Functions
+
+### `read_from_plan(path, default_speed=...)`
+
+```python
+def read_from_plan(
+    path: str,
+    default_speed: float = DEFAULT_WAYPOINT_SPEED,
+) -> List[Waypoint]
+```
+
+Parse a QGroundControl `.plan` file and return a list of navigation waypoints. Only `WAYPOINT`, `TAKEOFF`, and `RTL` commands are included; `SPEED` commands update the current speed for subsequent waypoints.
+
+<ParamField path="path" type="str" required>
+  File system path to the `.plan` file.
+</ParamField>
+
+<ParamField path="default_speed" type="float">
+  Speed in m/s to assign to waypoints when no `SPEED` command precedes them in the plan.
+</ParamField>
+
+<ResponseField name="returns" type="List[Waypoint]">
+  List of waypoint tuples. See `Waypoint` below.
+</ResponseField>
+
+**Raises:** `PlanError` if the file does not exist, is not valid JSON, or is not a `.plan` file.
+
+```python
+from aerpawlib.v2 import read_from_plan, get_location_from_waypoint
+
+waypoints = read_from_plan("mission.plan")
+for wp in waypoints:
+    coord = get_location_from_waypoint(wp)
+    await drone.goto_coordinates(coord)
+```
+
+---
+
+### `read_from_plan_complete(path, default_speed=...)`
+
+```python
+def read_from_plan_complete(
+    path: str,
+    default_speed: float = DEFAULT_WAYPOINT_SPEED,
+) -> List[dict]
+```
+
+Parse a `.plan` file and return **all** waypoints (including takeoff and RTL items) as detailed dictionaries.
+
+<ParamField path="path" type="str" required>
+  File system path to the `.plan` file.
+</ParamField>
+
+<ParamField path="default_speed" type="float">
+  Default speed in m/s.
+</ParamField>
+
+<ResponseField name="returns" type="List[dict]">
+  List of waypoint dictionaries, each with the following keys:
+
+  <Expandable title="dict fields">
+    <ResponseField name="id" type="int">
+      QGroundControl `doJumpId` for this waypoint.
+    </ResponseField>
+    <ResponseField name="command" type="int">
+      MAVLink command code (e.g. `16` for `MAV_CMD_NAV_WAYPOINT`).
+    </ResponseField>
+    <ResponseField name="pos" type="list[float]">
+      Position as `[lat, lon, alt]`.
+    </ResponseField>
+    <ResponseField name="wait_for" type="float">
+      Delay in seconds at this waypoint (from `params[0]`).
+    </ResponseField>
+    <ResponseField name="speed" type="float">
+      Speed in m/s at this waypoint.
+    </ResponseField>
+  </Expandable>
+</ResponseField>
+
+**Raises:** `PlanError` if the file cannot be read or parsed.
+
+```python
+from aerpawlib.v2 import read_from_plan_complete
+import asyncio
+
+waypoints = read_from_plan_complete("mission.plan")
+for wp in waypoints:
+    coord_data = wp["pos"]
+    from aerpawlib.v2 import Coordinate
+    coord = Coordinate(coord_data[0], coord_data[1], coord_data[2])
+    if wp["wait_for"] > 0:
+        await asyncio.sleep(wp["wait_for"])
+    await drone.goto_coordinates(coord)
+```
+
+---
+
+### `get_location_from_waypoint(waypoint)`
+
+```python
+def get_location_from_waypoint(waypoint: Waypoint) -> Coordinate
+```
+
+Convert a `Waypoint` tuple to a `Coordinate`.
+
+<ParamField path="waypoint" type="Waypoint" required>
+  A waypoint tuple as returned by `read_from_plan`.
+</ParamField>
+
+<ResponseField name="returns" type="Coordinate">
+  `Coordinate(lat=x, lon=y, alt=z)` extracted from the tuple.
+</ResponseField>
+
+## Waypoint type
+
+`Waypoint` is a named type alias for a tuple:
+
+```python
+Waypoint = Tuple[int, float, float, float, int, float]
+#                cmd  lat   lon   alt   id  speed
+```
+
+| Index | Name | Type | Description |
+|-------|------|------|-------------|
+| 0 | command | `int` | MAVLink command code |
+| 1 | lat (x) | `float` | Latitude in degrees |
+| 2 | lon (y) | `float` | Longitude in degrees |
+| 3 | alt (z) | `float` | Altitude in metres |
+| 4 | waypoint\_id | `int` | QGroundControl `doJumpId` |
+| 5 | speed | `float` | Speed in m/s |
+
+## Differences between the two functions
+
+| | `read_from_plan` | `read_from_plan_complete` |
+|---|---|---|
+| Return type | `List[Waypoint]` (tuple) | `List[dict]` |
+| Includes `TAKEOFF` / `RTL` | Yes | Yes |
+| Delay (`wait_for`) | Not exposed | Exposed as `wait_for` |
+| Waypoint ID | Accessible via index 4 | Accessible via `wp["id"]` |

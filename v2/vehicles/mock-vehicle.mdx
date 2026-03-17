@@ -1,0 +1,140 @@
+---
+title: "MockVehicle and DummyVehicle"
+description: "In-memory and no-op vehicle implementations for unit testing and dry-run validation."
+---
+
+Two test-oriented vehicle implementations are provided. Neither makes MAVSDK calls or requires a flight controller.
+
+## MockVehicle
+
+`MockVehicle` is a minimal in-memory object that satisfies `VehicleProtocol`. Use it for pure unit tests where you want to inspect or control vehicle state directly.
+
+```python
+from aerpawlib.v2 import MockVehicle, Coordinate
+
+vehicle = MockVehicle(
+    position=Coordinate(35.727, -78.696, 0),
+    armed=False,
+    connected=True,
+)
+
+print(vehicle.position)   # Coordinate(lat=35.727, lon=-78.696, alt=0.0)
+print(vehicle.armed)      # False
+print(vehicle.battery)    # Battery(voltage=12.6, current=0.0, level=100)
+print(vehicle.gps)        # GPSInfo(fix_type=3, satellites_visible=10)
+```
+
+### Constructor
+
+```python
+MockVehicle(
+    position: Optional[Coordinate] = None,
+    home: Optional[Coordinate] = None,
+    armed: bool = False,
+    connected: bool = True,
+)
+```
+
+<ParamField path="position" type="Coordinate | None" default="None">
+  Initial position. Defaults to NCSU coordinates `Coordinate(35.727436, -78.696587, 0)`.
+</ParamField>
+
+<ParamField path="home" type="Coordinate | None" default="None">
+  Home coordinate. Defaults to the initial `position`.
+</ParamField>
+
+<ParamField path="armed" type="bool" default="False">
+  Whether the mock starts in an armed state.
+</ParamField>
+
+<ParamField path="connected" type="bool" default="True">
+  Whether the mock starts in a connected state.
+</ParamField>
+
+### Properties
+
+| Property | Type | Default |
+|----------|------|---------|
+| `position` | `Coordinate` | As provided or NCSU default |
+| `home_coords` | `Optional[Coordinate]` | Same as `position` by default |
+| `battery` | `Battery` | `Battery(12.6, 0.0, 100)` |
+| `gps` | `GPSInfo` | `GPSInfo(fix_type=3, satellites_visible=10)` |
+| `heading` | `float` | `0.0` |
+| `armed` | `bool` | As provided |
+| `connected` | `bool` | As provided |
+
+`MockVehicle` also implements `heartbeat_tick()` as a no-op, satisfying `VehicleProtocol`.
+
+### When to use MockVehicle
+
+Use `MockVehicle` when:
+- Testing runner logic that reads vehicle properties.
+- Running `PreflightChecks` or `ConnectionHandler` in isolation.
+- You need to control specific telemetry values (battery level, GPS fix, position) in assertions.
+
+`MockVehicle` does **not** implement command methods (`goto_coordinates`, `takeoff`, etc.) and cannot be used as a drop-in for full pipeline tests.
+
+---
+
+## DummyVehicle
+
+`DummyVehicle` is a no-op implementation of the full `Vehicle` interface. All commands succeed silently. Use it to dry-run a complete runner pipeline without a flight controller.
+
+```python
+from aerpawlib.v2 import DummyVehicle
+
+vehicle = await DummyVehicle.connect()
+
+# All Vehicle methods succeed without doing anything
+await vehicle.goto_coordinates(Coordinate(35.728, -78.696, 0))
+print(vehicle.position)  # NCSU default
+print(vehicle.battery)   # Battery(12.6, 0.0, 100)
+vehicle.close()
+```
+
+### `DummyVehicle.connect`
+
+```python
+@classmethod
+async def connect(
+    cls,
+    connection_string: str = "",
+    mavsdk_server_port: int = 50051,
+    *,
+    timeout: float = 30.0,
+    safety: Optional[Any] = None,
+) -> DummyVehicle
+```
+
+All parameters are accepted for API compatibility but are ignored. Returns a new `DummyVehicle` immediately.
+
+### Default state
+
+| Property | Value |
+|----------|-------|
+| `position` | `Coordinate(35.727436, -78.696587, 0.0)` |
+| `home_coords` | Same as `position` |
+| `battery` | `Battery(12.6, 0.0, 100)` |
+| `gps` | `GPSInfo(fix_type=3, satellites_visible=10)` |
+| `armable` | `True` |
+| `armed` | `False` |
+| `connected` | `True` |
+
+`DummyVehicle` will **not** arm automatically (`_will_arm = False`). The `goto_coordinates` method is a no-op.
+
+### When to use DummyVehicle
+
+Use `DummyVehicle` when:
+- You want to test the full runner flow (`BasicRunner`, `StateMachine`) end-to-end without hardware.
+- Validating that state transitions and decorator registration work correctly.
+- Checking that command sequences don't raise exceptions.
+
+## Comparison
+
+| | `MockVehicle` | `DummyVehicle` |
+|---|---|---|
+| Implements full `Vehicle` interface | No | Yes |
+| Command methods available | No | Yes (no-ops) |
+| Works with `BasicRunner` / `StateMachine` | No | Yes |
+| Control over initial state | Yes | Partial (fixed defaults) |
+| Requires no MAVSDK | Yes | Yes |

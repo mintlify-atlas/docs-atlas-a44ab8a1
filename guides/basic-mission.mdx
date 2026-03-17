@@ -1,0 +1,196 @@
+---
+title: "Basic missions"
+description: "Write single-vehicle missions using BasicRunner, Coordinate, and VectorNED."
+---
+
+The simplest aerpawlib workflow is a single vehicle executing a linear sequence of commands. You write one class, decorate one method, and aerpawlib handles connection, initialization, and cleanup.
+
+## The BasicRunner pattern
+
+`BasicRunner` executes a single `@entrypoint` method and then stops. It is the right choice when your mission is a straightforward sequence of steps without conditional branching.
+
+```python
+from aerpawlib.v1 import Drone, BasicRunner, entrypoint
+
+class MyMission(BasicRunner):
+    @entrypoint
+    async def run(self, vehicle: Drone):
+        await vehicle.takeoff(10)
+        await vehicle.goto_coordinates(target)
+        await vehicle.land()
+```
+
+Rules:
+- Exactly one method per class may be decorated with `@entrypoint`.
+- The method must be `async`.
+- aerpawlib discovers the `BasicRunner` subclass automatically by inspecting the script.
+
+## Position types
+
+### Coordinate
+
+`Coordinate(lat, lon, alt)` represents an absolute position in WGS84 latitude/longitude with altitude in meters above the home position.
+
+```python
+from aerpawlib.v1 import Coordinate
+
+target = Coordinate(35.7275, -78.6960, 10)  # lat, lon, alt (meters)
+await vehicle.goto_coordinates(target)
+```
+
+### VectorNED
+
+`VectorNED(north, east, down)` is a relative displacement in meters using the North-East-Down coordinate frame. Use it to compute a target position relative to the vehicle's current position:
+
+```python
+from aerpawlib.v1 import VectorNED
+
+target = vehicle.position + VectorNED(10, 0)  # 10 m north
+await vehicle.goto_coordinates(target)
+```
+
+The `down` argument defaults to `0`. To descend 5 m relative to current altitude, use `VectorNED(0, 0, 5)` (positive down = descending).
+
+## Complete example: square flight
+
+The following is the full `examples/v1/basic_example.py` from the repository. It takes off, flies a 10 m x 10 m square, returns to the start position, and lands.
+
+```python examples/v1/basic_example.py
+from aerpawlib.v1.runner import BasicRunner, entrypoint
+from aerpawlib.v1.util import VectorNED
+from aerpawlib.v1.vehicle import Drone
+
+
+class SquareFlight(BasicRunner):
+    """Fly in a square pattern."""
+
+    @entrypoint
+    async def run(self, drone: Drone):
+        # Configuration
+        takeoff_altitude = 10  # meters
+        square_size = 10  # meters
+
+        print(f"[example] Starting square flight mission")
+        print(f"[example] Takeoff altitude: {takeoff_altitude}m")
+        print(f"[example] Square size: {square_size}m x {square_size}m")
+
+        # Take off
+        print(f"[example] Taking off to {takeoff_altitude}m...")
+        await drone.takeoff(takeoff_altitude)
+        print(
+            f"[example] Takeoff complete, altitude: {drone.position.alt:.1f}m"
+        )
+
+        # Save starting position
+        start_position = drone.position
+        print(f"[example] Start position: {start_position}")
+
+        # Fly square pattern: North -> East -> South -> West -> Back to start
+        waypoints = [
+            ("North", VectorNED(square_size, 0, 0)),
+            ("East", VectorNED(0, square_size, 0)),
+            ("South", VectorNED(-square_size, 0, 0)),
+            ("West", VectorNED(0, -square_size, 0)),
+        ]
+
+        current_position = start_position
+        for direction, offset in waypoints:
+            target = current_position + offset
+            print(f"[example] Flying {direction} to {target}")
+            await drone.goto_coordinates(target)
+            current_position = target
+            print(f"[example] Arrived at {direction} waypoint")
+
+        # Return to start position
+        print(f"[example] Returning to start position...")
+        await drone.goto_coordinates(start_position)
+        print(f"[example] Back at start position")
+
+        # Land
+        print(f"[example] Landing...")
+        await drone.land()
+        print(f"[example] Mission complete!")
+```
+
+Run it:
+
+```bash
+aerpawlib --script examples/v1/basic_example.py \
+  --conn udp://127.0.0.1:14550 \
+  --vehicle drone
+```
+
+## Common patterns
+
+### Waypoint loop
+
+Iterate over a list of absolute coordinates:
+
+```python
+from aerpawlib.v1 import Drone, Coordinate, BasicRunner, entrypoint
+
+class WaypointMission(BasicRunner):
+    @entrypoint
+    async def run(self, vehicle: Drone):
+        waypoints = [
+            Coordinate(35.7275, -78.6960, 10),
+            Coordinate(35.7280, -78.6955, 10),
+            Coordinate(35.7285, -78.6950, 10),
+        ]
+
+        await vehicle.takeoff(10)
+        for wp in waypoints:
+            await vehicle.goto_coordinates(wp)
+        await vehicle.land()
+```
+
+### Reading vehicle telemetry
+
+Access position, battery, GPS, velocity, and attitude from the vehicle object:
+
+```python
+pos = vehicle.position      # Coordinate: .lat, .lon, .alt
+batt = vehicle.battery      # .voltage
+gps = vehicle.gps           # .fix_type, .satellites_visible
+vel = vehicle.velocity      # velocity vector
+att = vehicle.attitude      # .pitch, .yaw, .roll
+```
+
+### Custom CLI arguments
+
+Override `initialize_args` to parse additional flags passed after the standard aerpawlib arguments:
+
+```python
+from argparse import ArgumentParser
+from typing import List
+
+class MyMission(BasicRunner):
+    def initialize_args(self, extra_args: List[str]):
+        parser = ArgumentParser()
+        parser.add_argument("--altitude", type=float, default=10.0)
+        args = parser.parse_args(extra_args)
+        self._altitude = args.altitude
+
+    @entrypoint
+    async def run(self, vehicle):
+        await vehicle.takeoff(self._altitude)
+        await vehicle.land()
+```
+
+Run with your custom argument:
+
+```bash
+aerpawlib --script my_mission.py --conn ... --vehicle drone --altitude 20
+```
+
+<Tip>
+  `initialize_args` is called before the vehicle connects, so you can use parsed values during the preflight phase.
+</Tip>
+
+## Vehicle types
+
+| Class | `--vehicle` | Movement |
+|---|---|---|
+| `Drone` | `drone` | Takeoff, land, 3D waypoints |
+| `Rover` | `rover` | 2D ground movement via `goto_coordinates` |
+| `DummyVehicle` | `none` | No-op; for scripts that don't need a vehicle |

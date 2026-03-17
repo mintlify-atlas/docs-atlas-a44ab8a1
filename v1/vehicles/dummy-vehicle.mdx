@@ -1,0 +1,74 @@
+---
+title: 'DummyVehicle'
+description: 'A no-op vehicle placeholder for scripts that do not require real vehicle hardware.'
+---
+
+`DummyVehicle` is a lightweight placeholder that satisfies the `Vehicle` interface without connecting to any hardware. It is useful for scripts that perform computation, logging, or ZMQ coordination without controlling a physical vehicle.
+
+## When to use it
+
+Use `DummyVehicle` when:
+
+- Your script coordinates between multiple agents via ZMQ but does not fly itself.
+- You are testing runner logic or state machine transitions without a simulator.
+- Your script needs to run in CI where no autopilot is available.
+
+## Usage via CLI
+
+Pass `--vehicle none` to the launcher to inject a `DummyVehicle` automatically:
+
+```bash
+aerpawlib --script my_script.py --vehicle none
+```
+
+The runner receives the `DummyVehicle` instance as the `vehicle` argument — no connection string is needed.
+
+## Usage in code
+
+```python
+from aerpawlib.v1 import DummyVehicle, BasicRunner, entrypoint
+
+class CoordinatorScript(BasicRunner):
+    @entrypoint
+    async def run(self, vehicle: DummyVehicle):
+        # vehicle has no real connection; safe to call close()
+        print("Running without hardware")
+        vehicle.close()
+```
+
+## Supported operations
+
+`DummyVehicle` provides a minimal set of no-op implementations:
+
+| Method | Behavior |
+|---|---|
+| `close()` | Marks the instance as closed; no-op otherwise |
+| `_preflight_wait(should_arm)` | No-op |
+| `_arm_vehicle()` | No-op (async, awaitable) |
+
+All other `Vehicle` properties (`position`, `battery`, `armed`, etc.) are **not** available on `DummyVehicle`. Accessing them raises `AttributeError`.
+
+<Warning>
+Do not pass a `DummyVehicle` to code that calls `drone.takeoff()`, `drone.goto_coordinates()`, or any movement method. Those methods only exist on `Drone` and `Rover`.
+</Warning>
+
+## With ZmqStateMachine
+
+A common pattern is to use `DummyVehicle` with `ZmqStateMachine` to build a ground-controller script that orchestrates other agents:
+
+```python
+from aerpawlib.v1 import ZmqStateMachine, state, DummyVehicle
+
+class GroundController(ZmqStateMachine):
+    @state("start", first=True)
+    async def start(self, vehicle: DummyVehicle):
+        # send a transition command to a remote drone runner
+        await self.transition_runner("drone1", "takeoff")
+        return "wait"
+
+    @state("wait")
+    async def wait(self, vehicle: DummyVehicle):
+        alt = await self.query_field("drone1", "current_altitude")
+        print(f"Drone altitude: {alt}")
+        return None
+```

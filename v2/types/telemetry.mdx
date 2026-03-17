@@ -1,0 +1,127 @@
+---
+title: "Telemetry types"
+description: "Battery, GPSInfo, and Attitude dataclasses returned by vehicle telemetry properties."
+---
+
+Three dataclasses carry real-time telemetry from the vehicle. They are updated on every subscription tick and available as vehicle properties.
+
+## Battery
+
+Returned by `vehicle.battery`.
+
+```python
+from aerpawlib.v2 import Battery
+
+bat = drone.battery
+print(bat.voltage)   # 12.3 (V)
+print(bat.current)   # 4.2 (A)
+print(bat.level)     # 87 (%)
+```
+
+### Fields
+
+<ResponseField name="voltage" type="float">
+  Battery voltage in volts.
+</ResponseField>
+
+<ResponseField name="current" type="float">
+  Battery current draw in amperes.
+</ResponseField>
+
+<ResponseField name="level" type="int">
+  Remaining charge as an integer percentage from 0 to 100.
+</ResponseField>
+
+### Usage
+
+```python
+# Check before takeoff
+if drone.battery.level < 20:
+    print("Low battery, aborting")
+    return
+```
+
+`can_takeoff` uses `battery.level` to enforce a configurable minimum battery check.
+
+---
+
+## GPSInfo
+
+Returned by `vehicle.gps`.
+
+```python
+from aerpawlib.v2 import GPSInfo
+
+gps = drone.gps
+print(gps.fix_type)          # 3
+print(gps.satellites_visible)  # 12
+```
+
+### Fields
+
+<ResponseField name="fix_type" type="int">
+  MAVLink GPS fix type:
+  - `0` or `1`: No fix
+  - `2`: 2D fix
+  - `3`: 3D fix (required for takeoff and navigation)
+</ResponseField>
+
+<ResponseField name="satellites_visible" type="int">
+  Number of GPS satellites currently visible.
+</ResponseField>
+
+### Usage
+
+```python
+# Confirm 3D fix before takeoff
+if drone.gps.fix_type < 3:
+    print(f"No 3D GPS fix (fix_type={drone.gps.fix_type})")
+    return
+```
+
+`can_takeoff` checks `gps.fix_type >= 3` as a prerequisite.
+
+---
+
+## Attitude
+
+Returned by `vehicle.attitude`.
+
+```python
+from aerpawlib.v2 import Attitude
+import math
+
+att = drone.attitude
+print(math.degrees(att.roll))   # -2.1
+print(math.degrees(att.pitch))  # 0.5
+print(math.degrees(att.yaw))    # 185.3
+```
+
+### Fields
+
+<ResponseField name="roll" type="float">
+  Roll angle in radians. Positive = right wing down.
+</ResponseField>
+
+<ResponseField name="pitch" type="float">
+  Pitch angle in radians. Positive = nose up.
+</ResponseField>
+
+<ResponseField name="yaw" type="float">
+  Yaw angle in radians. Derived from the MAVSDK attitude\_euler stream.
+</ResponseField>
+
+<Note>
+All attitude fields are in radians. Use `math.degrees()` to convert to degrees. For heading-as-degrees, prefer `vehicle.heading` which is already normalised to \[0, 360).
+</Note>
+
+### Usage
+
+```python
+import math
+
+# Check roll within safe limits
+roll_deg = math.degrees(drone.attitude.roll)
+if abs(roll_deg) > 30:
+    print(f"Excessive roll: {roll_deg:.1f}°")
+```

@@ -1,0 +1,149 @@
+---
+title: "v2 API overview"
+description: "Modern async-first API for controlling drones and ground vehicles on the AERPAW platform."
+---
+
+v2 is a complete rewrite of the aerpawlib vehicle control API. It runs on a single asyncio event loop, streams telemetry through native async subscriptions, and provides descriptor-based decorators for defining runners.
+
+## Key improvements over v1
+
+| Area | v1 | v2 |
+|------|-----|-----|
+| Event loop | Dual-loop (separate MAVSDK thread) | Single asyncio loop — all commands use direct `await` |
+| Telemetry | `ThreadSafeValue` shared state | Plain attributes updated by subscription callbacks |
+| Runners | Function-attribute pattern | Descriptor-based decorators or config dataclasses |
+| Non-blocking commands | Not supported | `VehicleTask` with `progress`, `cancel()`, `wait_done()` |
+| Safety | External | Built-in `can_takeoff`, `can_goto`, `can_land` with optional `SafetyCheckerClient` |
+| Connection handling | Manual | `ConnectionHandler` with heartbeat monitoring |
+
+## Quick start
+
+```python
+from aerpawlib.v2 import BasicRunner, Drone, VectorNED, entrypoint
+
+class MyMission(BasicRunner):
+    @entrypoint
+    async def run(self, drone: Drone):
+        await drone.takeoff(altitude=10)
+        await drone.goto_coordinates(drone.position + VectorNED(20, 0))
+        await drone.land()
+```
+
+Run with:
+
+```bash
+aerpawlib --api-version v2 --script my_mission.py --vehicle drone --conn udpin://127.0.0.1:14550
+```
+
+## Import patterns
+
+All public symbols are available from the top-level `aerpawlib.v2` package:
+
+```python
+from aerpawlib.v2 import (
+    Drone, Rover, Vehicle, DummyVehicle, VehicleTask,
+    BasicRunner, BasicRunnerConfig,
+    StateMachine, StateMachineConfig, StateSpec,
+    ZmqStateMachine, ZmqStateMachineConfig,
+    entrypoint, state, timed_state, background, at_init,
+    expose_zmq, expose_field_zmq,
+    Coordinate, VectorNED, Battery, GPSInfo, Attitude,
+    Waypoint, read_from_plan, read_from_plan_complete, get_location_from_waypoint,
+    read_geofence, inside, do_intersect,
+    ExternalProcess,
+    run_zmq_proxy, check_zmq_proxy_reachable,
+    MockVehicle,
+    VehicleProtocol, GPSProtocol,
+    AERPAW_Platform,
+)
+```
+
+Safety types live in the sub-package:
+
+```python
+from aerpawlib.v2.safety import SafetyCheckerClient, NoOpSafetyChecker
+```
+
+## Public exports (`__all__`)
+
+<Columns cols={3}>
+
+<Card title="Vehicles">
+`Drone` `Rover` `Vehicle` `DummyVehicle` `VehicleTask`
+</Card>
+
+<Card title="Runners">
+`BasicRunner` `BasicRunnerConfig` `Runner`
+`StateMachine` `StateMachineConfig` `StateSpec`
+`ZmqStateMachine` `ZmqStateMachineConfig`
+</Card>
+
+<Card title="Decorators">
+`entrypoint` `state` `timed_state` `background` `at_init`
+`expose_zmq` `expose_field_zmq`
+</Card>
+
+<Card title="Types">
+`Coordinate` `VectorNED` `Battery` `GPSInfo` `Attitude`
+</Card>
+
+<Card title="Utilities">
+`ExternalProcess` `Waypoint`
+`read_from_plan` `read_from_plan_complete` `get_location_from_waypoint`
+`read_geofence` `inside` `do_intersect`
+`run_zmq_proxy` `check_zmq_proxy_reachable`
+</Card>
+
+<Card title="Exceptions">
+`AerpawlibError` `AerpawConnectionError` `ConnectionTimeoutError`
+`HeartbeatLostError` `PortInUseError` `CommandError`
+`ArmError` `DisarmError` `TakeoffError` `LandingError`
+`NavigationError` `VelocityError` `RTLError`
+`StateError` `NotArmableError` `NotConnectedError`
+`UnexpectedDisarmError` `RunnerError` `NoEntrypointError`
+`InvalidStateError` `NoInitialStateError`
+`MultipleInitialStatesError` `InvalidStateNameError` `PlanError`
+</Card>
+
+</Columns>
+
+## Section map
+
+<CardGroup cols={2}>
+  <Card title="Architecture" icon="sitemap" href="/v2/architecture">
+    Single event loop, async telemetry, VehicleTask, descriptor runners.
+  </Card>
+  <Card title="Drone" icon="circle-play" href="/v2/vehicles/drone">
+    Full API reference for the Drone class.
+  </Card>
+  <Card title="Rover" icon="car" href="/v2/vehicles/rover">
+    Full API reference for the Rover class.
+  </Card>
+  <Card title="VehicleTask" icon="list-check" href="/v2/vehicles/vehicle-task">
+    Non-blocking command handle with progress and cancellation.
+  </Card>
+  <Card title="BasicRunner" icon="play" href="/v2/runners/basic-runner">
+    Simple single-entrypoint runner.
+  </Card>
+  <Card title="StateMachine" icon="diagram-project" href="/v2/runners/state-machine">
+    State-based mission runner.
+  </Card>
+  <Card title="ZmqStateMachine" icon="network-wired" href="/v2/runners/zmq-state-machine">
+    State machine with ZMQ-based remote control.
+  </Card>
+  <Card title="Types" icon="shapes" href="/v2/types/coordinate">
+    Coordinate, VectorNED, Battery, GPSInfo, Attitude.
+  </Card>
+  <Card title="Plan files" icon="file-lines" href="/v2/utilities/plan-files">
+    QGroundControl .plan file parsing.
+  </Card>
+  <Card title="Safety" icon="shield-halved" href="/v2/safety/overview">
+    Command validation and SafetyCheckerClient.
+  </Card>
+  <Card title="Exceptions" icon="triangle-exclamation" href="/v2/errors/exceptions">
+    Full exception hierarchy.
+  </Card>
+  <Card title="Testing" icon="flask" href="/v2/vehicles/mock-vehicle">
+    MockVehicle and DummyVehicle for tests.
+  </Card>
+</CardGroup>

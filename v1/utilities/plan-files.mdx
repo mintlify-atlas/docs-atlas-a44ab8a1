@@ -1,0 +1,177 @@
+---
+title: 'Plan files'
+description: 'Read navigation waypoints from QGroundControl .plan files.'
+---
+
+QGroundControl saves missions as `.plan` files — JSON documents containing a sequence of MAVLink mission items. aerpawlib provides utilities to parse these files into `Coordinate` objects your script can fly to.
+
+```python
+from aerpawlib.v1 import read_from_plan, read_from_plan_complete, get_location_from_waypoint
+```
+
+## `.plan` file format
+
+A `.plan` file is a JSON object with a `mission.items` array. Each item has a `command` field (MAVLink command ID) and a `params` array.
+
+aerpawlib recognizes the following command IDs:
+
+| ID | Command | Description |
+|---|---|---|
+| 16 | `MAV_CMD_NAV_WAYPOINT` | Navigation waypoint |
+| 22 | `MAV_CMD_NAV_TAKEOFF` | Takeoff command |
+| 20 | `MAV_CMD_NAV_RETURN_TO_LAUNCH` | Return to launch |
+| 178 | `MAV_CMD_DO_CHANGE_SPEED` | Speed change |
+
+For waypoint items, `params[4]` = latitude, `params[5]` = longitude, `params[6]` = altitude.
+
+## Functions
+
+### `read_from_plan`
+
+```python
+read_from_plan(
+    path: str,
+    default_speed: float = 5.0,
+) -> List[Tuple[int, float, float, float, int, float]]
+```
+
+Parses a `.plan` file and returns a list of navigation waypoints. Each element is a tuple:
+
+```
+(command, lat, lon, alt, waypoint_id, speed)
+```
+
+- Takeoff (`22`) and RTL (`20`) items **are** included.
+- Speed change items (`178`) are consumed to update the running speed for subsequent waypoints.
+
+<ParamField path="path" type="string" required>
+  Path to the `.plan` file.
+</ParamField>
+
+<ParamField path="default_speed" type="number" default="5.0">
+  Speed in m/s applied to waypoints before any `DO_CHANGE_SPEED` item. Defaults to `DEFAULT_WAYPOINT_SPEED` (5 m/s).
+</ParamField>
+
+```python
+waypoints = read_from_plan("mission.plan")
+for cmd, lat, lon, alt, wp_id, speed in waypoints:
+    print(f"WP {wp_id}: ({lat:.6f}, {lon:.6f}) alt={alt} spd={speed}")
+```
+
+### `read_from_plan_complete`
+
+```python
+read_from_plan_complete(
+    path: str,
+    default_speed: float = 5.0,
+) -> List[dict]
+```
+
+Similar to `read_from_plan` but returns full dictionaries with an additional `wait_for` field (the `params[0]` delay value):
+
+```python
+{
+    "id": int,          # waypoint sequence number
+    "command": int,     # MAVLink command ID
+    "pos": [lat, lon, alt],
+    "wait_for": float,  # hold time at waypoint (seconds)
+    "speed": float,     # speed to use approaching this waypoint (m/s)
+}
+```
+
+<ParamField path="path" type="string" required>
+  Path to the `.plan` file.
+</ParamField>
+
+<ParamField path="default_speed" type="number" default="5.0">
+  Default speed in m/s.
+</ParamField>
+
+```python
+waypoints = read_from_plan_complete("mission.plan")
+for wp in waypoints:
+    print(f"WP {wp['id']} hold={wp['wait_for']}s pos={wp['pos']}")
+```
+
+### `get_location_from_waypoint`
+
+```python
+get_location_from_waypoint(waypoint: tuple) -> Coordinate
+```
+
+Extracts a `Coordinate` from a waypoint tuple returned by `read_from_plan`.
+
+<ParamField path="waypoint" type="tuple" required>
+  A waypoint tuple `(command, lat, lon, alt, waypoint_id, speed)` as returned by `read_from_plan`.
+</ParamField>
+
+```python
+waypoints = read_from_plan("mission.plan")
+for wp in waypoints:
+    coord = get_location_from_waypoint(wp)
+    await drone.goto_coordinates(coord)
+```
+
+## Full example
+
+```python
+from aerpawlib.v1 import (
+    Drone, BasicRunner, entrypoint,
+    read_from_plan, get_location_from_waypoint,
+)
+from aerpawlib.v1.util import PLAN_CMD_TAKEOFF, PLAN_CMD_WAYPOINT
+
+# constants from aerpawlib.v1.constants
+PLAN_CMD_TAKEOFF = 22
+PLAN_CMD_WAYPOINT = 16
+
+class PlanMission(BasicRunner):
+    @entrypoint
+    async def run(self, drone: Drone):
+        waypoints = read_from_plan("mission.plan")
+
+        for wp in waypoints:
+            cmd, lat, lon, alt, wp_id, speed = wp
+            coord = get_location_from_waypoint(wp)
+
+            await drone.set_groundspeed(speed)
+
+            if cmd == PLAN_CMD_TAKEOFF:
+                await drone.takeoff(alt)
+            elif cmd == PLAN_CMD_WAYPOINT:
+                await drone.goto_coordinates(coord)
+
+        await drone.land()
+```
+
+## QGroundControl `.plan` file example
+
+```json
+{
+  "fileType": "Plan",
+  "mission": {
+    "items": [
+      {
+        "command": 22,
+        "doJumpId": 1,
+        "params": [0, 0, 0, 0, 35.7275, -78.6960, 10]
+      },
+      {
+        "command": 178,
+        "doJumpId": 2,
+        "params": [1, 8.0, -1, 0, 0, 0, 0]
+      },
+      {
+        "command": 16,
+        "doJumpId": 3,
+        "params": [0, 0, 0, 0, 35.7280, -78.6955, 15]
+      },
+      {
+        "command": 20,
+        "doJumpId": 4,
+        "params": [0, 0, 0, 0, 0, 0, 0]
+      }
+    ]
+  }
+}
+```

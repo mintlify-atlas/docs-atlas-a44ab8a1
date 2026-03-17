@@ -1,0 +1,87 @@
+---
+title: "Examples overview"
+description: "Browse runnable examples for both the v1 and v2 aerpawlib APIs, covering single-vehicle missions, state machines, velocity control, and multi-vehicle ZMQ coordination."
+---
+
+Every example in this section is a complete, runnable Python script drawn directly from the `examples/` directory of the aerpawlib repository. You can run them against a SITL simulator or real hardware using the `aerpawlib` CLI.
+
+<CardGroup cols={2}>
+  <Card title="v1 examples" icon="code" href="/examples/v1-examples">
+    BasicRunner and StateMachine scripts for the stable v1 API — square patterns, figure-8s, background logging, and ZMQ leader/follower.
+  </Card>
+  <Card title="v2 examples" icon="rocket" href="/examples/v2-examples">
+    Modern async-first examples for the v2 API — drone and rover missions, velocity control, state machines, and command validation.
+  </Card>
+</CardGroup>
+
+## All examples at a glance
+
+| Example | API | Description |
+|---------|-----|-------------|
+| `basic_runner` | v1 | Minimal `BasicRunner` — takeoff, fly north, land |
+| `basic_example` | v1 | Square flight pattern (10 m × 10 m) |
+| `figure_eight` | v1 | Figure-8 waypoint pattern with configurable radius |
+| `squareoff_logging` | v1 | Square flight with background CSV position logging |
+| `preplanned_trajectory` | v1 | Waypoints from a QGroundControl `.plan` file |
+| `zmq_runner` | v1 | Leader/follower multi-vehicle ZMQ coordination |
+| `basic_example` | v2 | Square flight pattern using the v2 API |
+| `rover_example` | v2 | Rover 2D waypoint mission |
+| `velocity_example` | v2 | Velocity control — hover, translate, stop |
+| `state_machine_example` | v2 | `StateMachine` with `@timed_state` and `@background` |
+| `command_validation_example` | v2 | `can_takeoff` / `can_goto` before commands |
+| `zmq_state_machine_example` | v2 | `ZmqStateMachine` with `@expose_zmq` |
+
+## How to run examples
+
+### v1 examples
+
+<Steps>
+  <Step title="Install aerpawlib">
+    See [Installation](/installation) for setup instructions.
+  </Step>
+  <Step title="Start a SITL simulator">
+    Start ArduPilot SITL or connect to hardware. The default SITL UDP port is `udp://127.0.0.1:14550`.
+  </Step>
+  <Step title="Run a script">
+    Pass `--api-version v1` and the path to the script:
+
+    ```bash
+    aerpawlib --api-version v1 --script examples/v1/basic_example.py \
+        --vehicle drone --conn udp://127.0.0.1:14550
+    ```
+  </Step>
+</Steps>
+
+### v2 examples
+
+<Steps>
+  <Step title="Install aerpawlib">
+    See [Installation](/installation) for setup instructions.
+  </Step>
+  <Step title="Start a SITL simulator">
+    The v2 API uses `udpin://` connection strings by default.
+  </Step>
+  <Step title="Run a script">
+    Pass `--api-version v2` and the path to the script:
+
+    ```bash
+    aerpawlib --api-version v2 --script examples/v2/basic_example.py \
+        --vehicle drone --conn udpin://127.0.0.1:14550
+    ```
+  </Step>
+</Steps>
+
+### Multi-vehicle ZMQ examples
+
+ZMQ examples require the `aerpawlib` proxy to be running in a separate terminal before starting any vehicle scripts.
+
+```bash
+# Terminal 1 — start the ZMQ proxy
+aerpawlib --run-proxy
+```
+
+See [v1 examples](/examples/v1-examples#zmq-leaderfollower) and [v2 examples](/examples/v2-examples#zmq-state-machine) for per-script launch commands.
+
+<Note>
+  The `--conn` flag accepts any MAVSDK connection string. For SITL, `udp://127.0.0.1:14550` (v1) and `udpin://127.0.0.1:14550` (v2) are the most common. For real hardware, use a serial or TCP string.
+</Note>

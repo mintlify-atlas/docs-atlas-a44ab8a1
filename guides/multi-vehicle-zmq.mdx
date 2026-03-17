@@ -1,0 +1,259 @@
+---
+title: "Multi-vehicle ZMQ coordination"
+description: "Coordinate multiple vehicles using ZmqStateMachine, @expose_zmq, and the ZMQ proxy."
+---
+
+aerpawlib supports multi-vehicle coordination via ZMQ. Each vehicle runs its own script and process. A central proxy relays messages between them. Runners can trigger state transitions in other runners and query their exposed fields.
+
+## Architecture
+
+```
+  leader process              proxy process             follower process
+  ZmqStateMachine  <-pub-->  aerpawlib --run-proxy  <--sub->  ZmqStateMachine
+                   <-sub--                           --pub->
+```
+
+1. One proxy process forwards messages between all runners.
+2. Each vehicle script runs in its own process with a unique `--zmq-identifier`.
+3. Runners send transition commands and field queries through the proxy.
+
+## Starting the ZMQ proxy
+
+Before starting any vehicle scripts, start the proxy in a dedicated terminal:
+
+```bash
+aerpawlib --run-proxy
+```
+
+The proxy binds on two fixed ports: `5559` (incoming from publishers) and `5560` (outgoing to subscribers).
+
+<Warning>
+  The proxy must be running before any `ZmqStateMachine` runners start. Runners log a warning if the proxy is unreachable at startup but will continue trying.
+</Warning>
+
+## ZmqStateMachine
+
+`ZmqStateMachine` extends `StateMachine` with two additional capabilities:
+
+- **Trigger state transitions** in other runners via `transition_runner(identifier, state_name)`
+- **Query field values** from other runners via `query_field(identifier, field_name)`
+
+Expose states and fields using the `@expose_zmq` and `@expose_field_zmq` decorators.
+
+### @expose_zmq
+
+Marks a `@state` or `@timed_state` method so it can be entered remotely via a ZMQ transition command:
+
+```python
+from aerpawlib.v1.runner import ZmqStateMachine, state, expose_zmq
+
+class FollowRunner(ZmqStateMachine):
+    @expose_zmq(name="takeoff")
+    @state(name="takeoff")
+    async def state_takeoff(self, drone):
+        await drone.takeoff(10)
+        return "fly_to_waypoint"
+```
+
+The `name` in `@expose_zmq` is the ZMQ message name that triggers the transition. It can differ from the state name.
+
+### @expose_field_zmq
+
+Exposes a method whose return value can be queried by other runners:
+
+```python
+@expose_field_zmq(name="altitude")
+async def get_altitude(self, vehicle):
+    return vehicle.position.alt
+```
+
+### transition_runner
+
+Triggers a named state transition in another runner:
+
+```python
+await self.transition_runner("follower", "takeoff")
+```
+
+The first argument is the `--zmq-identifier` of the target runner. The second argument is the ZMQ name registered via `@expose_zmq`.
+
+### query_field
+
+Requests the value of a field exposed by another runner:
+
+```python
+altitude = await self.query_field("follower", "altitude", timeout=5.0)
+```
+
+Blocks until the reply arrives or the timeout (in seconds) elapses.
+
+## Leader/follower example
+
+The following is based on `examples/v1/zmq_runner/leader.py` and `examples/v1/zmq_runner/follower.py`.
+
+<CodeGroup>
+
+```python leader.py
+from aerpawlib.v1.runner import ZmqStateMachine, state, sleep
+from aerpawlib.v1.external import ExternalProcess
+import re
+
+target_ip = "127.0.0.1"
+
+
+class LeaderRunner(ZmqStateMachine):
+    _ping_regex = re.compile(
+        r".+icmp_seq=(?P<seq>\d+).+time=(?P<time>\d\.\d+) ms"
+    )
+
+    async def _ping_latency(self, address: str, count: int):
+        ping = ExternalProcess("ping", params=["-c", str(count), address])
+        await ping.start()
+        latencies = []
+        buff = 1
+        while buff:
+            buff = await ping.wait_until_output(r"icmp_seq=")
+            if not buff:
+                break
+            m = self._ping_regex.match(buff[-1])
+            if m:
+                latencies.append(float(m.group("time")))
+                if m.group("seq") == str(count):
+                    break
+        return sum(latencies) / len(latencies)
+
+    @state(name="launch", first=True)
+    async def state_start(self, _):
+        await sleep(10)
+        return "start_ping"
+
+    @state(name="start_ping")
+    async def state_start_ping(self, _):
+        p = await self._ping_latency(target_ip, 5)
+        print(f"ping_result: {p}")
+        await self.transition_runner("follower", "takeoff")
+        return "wait_for_waypoint"
+
+    @state(name="wait_for_waypoint")
+    async def state_wait_waypoint(self, _):
+        return "wait_for_waypoint"
+
+    @state(name="waypoint_ping")
+    async def state_ping_waypoint(self, _):
+        p = await self._ping_latency(target_ip, 5)
+        print(f"ping_result: {p}")
+        await self.transition_runner("follower", "rtl")
+        return "wait_for_rtl"
+
+    @state(name="wait_for_rtl")
+    async def state_wait_rtl(self, _):
+        return "wait_for_rtl"
+
+    @state(name="last_ping")
+    async def state_last_ping(self, _):
+        p = await self._ping_latency(target_ip, 5)
+        print(f"ping_result: {p}")
+        await self.transition_runner("follower", "land")
+        return
+```
+
+```python follower.py
+from aerpawlib.v1.runner import ZmqStateMachine, state, sleep
+from aerpawlib.v1.util import Coordinate, VectorNED
+from aerpawlib.v1.vehicle import Drone
+
+
+class FollowRunner(ZmqStateMachine):
+    @state(name="launch_wait", first=True)
+    async def state_start(self, _):
+        return "launch_wait"  # Wait here until leader transitions us
+
+    @state(name="takeoff")
+    async def state_takeoff(self, drone):
+        await drone.takeoff(10)
+        return "fly_to_waypoint"
+
+    @state(name="fly_to_waypoint")
+    async def state_waypoint(self, drone):
+        await drone.goto_coordinates(drone.position + VectorNED(20, 0))
+        await sleep(5)
+        await self.transition_runner("leader", "waypoint_ping")
+        return "waypoint_wait"
+
+    @state(name="waypoint_wait")
+    async def state_wait_waypoint(self, _):
+        return "waypoint_wait"
+
+    @state(name="rtl")
+    async def state_rtl(self, drone):
+        home_coords = Coordinate(
+            drone.home_coords.lat, drone.home_coords.lon, drone.position.alt
+        )
+        await drone.goto_coordinates(home_coords)
+        await sleep(5)
+        await self.transition_runner("leader", "last_ping")
+        return "wait_last_ping"
+
+    @state("wait_last_ping")
+    async def state_wait_last_ping(self, _):
+        return "wait_last_ping"
+
+    @state("land")
+    async def state_land(self, drone):
+        await drone.land()
+        return
+```
+
+</CodeGroup>
+
+## Running the leader/follower example
+
+Open three terminals:
+
+```bash
+# Terminal 1 - ZMQ proxy
+aerpawlib --run-proxy
+```
+
+```bash
+# Terminal 2 - Leader (uses DummyVehicle; no physical vehicle needed)
+aerpawlib --script examples/v1/zmq_runner/leader.py \
+  --conn udp://127.0.0.1:14550 \
+  --vehicle none \
+  --zmq-identifier leader \
+  --zmq-proxy-server 127.0.0.1
+```
+
+```bash
+# Terminal 3 - Follower drone
+aerpawlib --script examples/v1/zmq_runner/follower.py \
+  --conn udp://127.0.0.1:14551 \
+  --vehicle drone \
+  --zmq-identifier follower \
+  --zmq-proxy-server 127.0.0.1
+```
+
+<Note>
+  Use a unique `--mavsdk-port` for each vehicle when running multiple drone processes on the same host to avoid gRPC port conflicts (v2 only).
+</Note>
+
+## ZMQ-specific CLI flags
+
+| Flag | Description |
+|---|---|
+| `--run-proxy` | Start the ZMQ proxy and exit. Run before vehicle scripts. |
+| `--zmq-identifier` | Unique name for this runner in the ZMQ network. |
+| `--zmq-proxy-server` | IP address of the machine running the proxy. |
+
+## How messages work
+
+When `transition_runner("follower", "takeoff")` is called:
+
+1. The leader puts a `TRANSITION` message on its internal send queue.
+2. The `_zmq_bg_pub` background task publishes it to the proxy's inbound port.
+3. The proxy forwards it to all subscribers.
+4. The follower's `_zmq_bg_sub` task receives the message.
+5. Since the `identifier` matches `"follower"`, the follower schedules the state override.
+6. After the current state completes, the follower transitions to the `"takeoff"` state.
+
+Field queries follow the same path, but the response is routed back to the requester via a `FIELD_CALLBACK` message.

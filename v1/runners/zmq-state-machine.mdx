@@ -1,0 +1,190 @@
+---
+title: 'ZmqStateMachine'
+description: 'StateMachine with ZMQ remote control for multi-agent coordination.'
+---
+
+`ZmqStateMachine` extends `StateMachine` with the ability to send and receive state-transition commands and field queries over a ZMQ pub/sub network. Multiple runners on the same network can coordinate by triggering each other’s state transitions and reading each other’s values.
+
+<Note>
+A ZMQ proxy must be running before any `ZmqStateMachine` instances start. See [ZMQ utilities](/v1/utilities/zmq) for proxy setup.
+</Note>
+
+## Additional decorators
+
+### `@expose_zmq`
+
+```python
+from aerpawlib.v1 import expose_zmq
+
+@expose_zmq(name: str)
+```
+
+Combine with `@state` or `@timed_state` to allow a remote runner to trigger a transition into this state.
+
+<ParamField path="name" type="string" required>
+  The ZMQ-visible name used when requesting the transition remotely. Does not need to match the state name.
+</ParamField>
+
+```python
+@state("return_home", first=False)
+@expose_zmq("rtl")
+async def return_home(self, drone: Drone) -> None:
+    await drone.return_to_launch()
+    return None
+```
+
+### `@expose_field_zmq`
+
+```python
+from aerpawlib.v1 import expose_field_zmq
+
+@expose_field_zmq(name: str)
+```
+
+Exposes an async method as a queryable field. When a remote runner calls `query_field(identifier, name)`, this method is invoked and its return value is sent back.
+
+<ParamField path="name" type="string" required>
+  The field name used by remote callers.
+</ParamField>
+
+```python
+@expose_field_zmq("current_altitude")
+async def get_altitude(self, drone: Drone) -> float:
+    return drone.position.alt
+```
+
+## Methods
+
+### `transition_runner`
+
+```python
+await self.transition_runner(identifier: str, state: str) -> None
+```
+
+Sends a state-transition command to another runner on the network.
+
+<ParamField path="identifier" type="string" required>
+  The ZMQ identifier of the target runner (set via `--zmq-identifier` at launch).
+</ParamField>
+
+<ParamField path="state" type="string" required>
+  The ZMQ-exposed state name to transition to (the `name` argument of `@expose_zmq`).
+</ParamField>
+
+```python
+await self.transition_runner("drone1", "rtl")
+```
+
+### `query_field`
+
+```python
+await self.query_field(
+    identifier: str,
+    field: str,
+    timeout: float = 30.0,
+) -> Any
+```
+
+Requests the current value of an `@expose_field_zmq` field from a remote runner.
+
+<ParamField path="identifier" type="string" required>
+  Identifier of the runner to query.
+</ParamField>
+
+<ParamField path="field" type="string" required>
+  Field name (the `name` argument of `@expose_field_zmq`).
+</ParamField>
+
+<ParamField path="timeout" type="number" default="30.0">
+  Maximum seconds to wait for a reply. Raises `asyncio.TimeoutError` if exceeded.
+</ParamField>
+
+```python
+alt = await self.query_field("drone1", "current_altitude")
+print(f"Drone 1 altitude: {alt}")
+```
+
+## Startup
+
+`ZmqStateMachine` requires two CLI flags at launch:
+
+| Flag | Description |
+|---|---|
+| `--zmq-identifier <id>` | Unique name for this runner in the network |
+| `--zmq-proxy-server <addr>` | IP address of the ZMQ proxy (without port) |
+
+```bash
+# Start the proxy first
+aerpawlib --run-proxy
+
+# Start the leader runner
+aerpawlib --script leader.py --vehicle drone --conn udp://:14540 \
+    --zmq-identifier leader --zmq-proxy-server 127.0.0.1
+
+# Start the follower runner
+aerpawlib --script follower.py --vehicle drone --conn udp://:14541 \
+    --zmq-identifier follower --zmq-proxy-server 127.0.0.1
+```
+
+<Warning>
+If `--zmq-identifier` or `--zmq-proxy-server` is missing, `run()` raises `StateMachineError`. If the proxy is unreachable, a warning is logged but execution continues.
+</Warning>
+
+## Full example
+
+<CodeGroup>
+
+```python leader.py
+import asyncio
+from aerpawlib.v1 import ZmqStateMachine, state, expose_zmq, expose_field_zmq, Drone
+
+class LeaderDrone(ZmqStateMachine):
+    @state("start", first=True)
+    async def start(self, drone: Drone) -> str:
+        await drone.takeoff(15)
+        # command follower to take off
+        await self.transition_runner("follower", "takeoff")
+        return "navigate"
+
+    @state("navigate")
+    async def navigate(self, drone: Drone) -> str:
+        from aerpawlib.v1 import Coordinate
+        target = Coordinate(35.7275, -78.6960, 15)
+        await drone.goto_coordinates(target)
+        await self.transition_runner("follower", "rtl")
+        return "land"
+
+    @state("land")
+    async def land_state(self, drone: Drone) -> None:
+        await drone.land()
+        return None
+
+    @expose_field_zmq("altitude")
+    async def get_altitude(self, drone: Drone) -> float:
+        return drone.position.alt
+```
+
+```python follower.py
+import asyncio
+from aerpawlib.v1 import ZmqStateMachine, state, expose_zmq, Drone
+
+class FollowerDrone(ZmqStateMachine):
+    @state("idle", first=True)
+    async def idle(self, drone: Drone) -> str:
+        await asyncio.sleep(1)
+        return "idle"
+
+    @state("takeoff")
+    @expose_zmq("takeoff")
+    async def takeoff(self, drone: Drone) -> str:
+        await drone.takeoff(15)
+        return "idle"
+
+    @state("rtl")
+    @expose_zmq("rtl")
+    async def rtl(self, drone: Drone) -> None:
+        await drone.return_to_launch()
+        return None
+```
+
+</CodeGroup>

@@ -1,0 +1,147 @@
+---
+title: 'VectorNED'
+description: 'Three-dimensional vector in North-East-Down frame for velocity and displacement.'
+---
+
+`VectorNED` represents a 3D displacement or velocity in the **North-East-Down** coordinate frame, with components in meters (displacement) or meters per second (velocity).
+
+```python
+from aerpawlib.v1 import VectorNED
+```
+
+## Constructor
+
+```python
+VectorNED(north: float, east: float, down: float = 0)
+```
+
+<ParamField path="north" type="number" required>
+  Component toward geographic north (meters or m/s). Positive = north.
+</ParamField>
+
+<ParamField path="east" type="number" required>
+  Component toward geographic east (meters or m/s). Positive = east.
+</ParamField>
+
+<ParamField path="down" type="number" default="0">
+  Component toward ground (meters or m/s). Positive = downward. Defaults to 0.
+</ParamField>
+
+```python
+v = VectorNED(5, 3, 0)        # 5 m/s north, 3 m/s east, no vertical
+v = VectorNED(0, 0, -2)       # climb at 2 m/s (negative down = up)
+```
+
+## Properties
+
+| Property | Type | Description |
+|---|---|---|
+| `north` | `float` | North component |
+| `east` | `float` | East component |
+| `down` | `float` | Down component (positive = toward ground) |
+
+## Methods
+
+### `hypot`
+
+```python
+v.hypot(ignore_down: bool = False) -> float
+```
+
+Returns the magnitude (length) of the vector.
+
+<ParamField path="ignore_down" type="boolean" default="false">
+  When `True`, computes the 2D ground magnitude using only north and east. When `False`, computes the full 3D magnitude.
+</ParamField>
+
+```python
+v = VectorNED(3, 4, 0)
+print(v.hypot())              # 5.0 (3D magnitude)
+print(v.hypot(ignore_down=True))  # 5.0 (2D, same here since down=0)
+
+v3d = VectorNED(3, 4, 0)
+print(v3d.hypot())            # 5.0
+```
+
+### `norm`
+
+```python
+v.norm() -> VectorNED
+```
+
+Returns a unit vector (magnitude = 1) in the same direction. Returns a zero vector if the input magnitude is zero.
+
+```python
+v = VectorNED(3, 4, 0)
+unit = v.norm()   # VectorNED(0.6, 0.8, 0.0)
+```
+
+### `rotate_by_angle`
+
+```python
+v.rotate_by_angle(angle: float) -> VectorNED
+```
+
+Rotates the vector in the horizontal plane by `angle` degrees (counterclockwise when viewed from above). The `down` component is unchanged.
+
+<ParamField path="angle" type="number" required>
+  Rotation angle in degrees. Positive values rotate counterclockwise when viewed from above.
+</ParamField>
+
+```python
+# Rotate a north-pointing vector 90° to point east
+v = VectorNED(1, 0, 0)
+rotated = v.rotate_by_angle(90)   # VectorNED(~0, 1, 0)
+```
+
+### `cross_product`
+
+```python
+v.cross_product(other: VectorNED) -> VectorNED
+```
+
+Returns the cross product `self × other`.
+
+## Arithmetic operators
+
+| Operation | Example | Result |
+|---|---|---|
+| Addition | `v1 + v2` | Component-wise sum |
+| Subtraction | `v1 - v2` | Component-wise difference |
+| Scalar multiply | `v * 2.0` or `2.0 * v` | Each component scaled |
+
+```python
+v1 = VectorNED(1, 0, 0)
+v2 = VectorNED(0, 1, 0)
+
+sum_v = v1 + v2          # VectorNED(1, 1, 0)
+diff_v = v1 - v2         # VectorNED(1, -1, 0)
+scaled = v1 * 3.0        # VectorNED(3, 0, 0)
+scaled2 = 3.0 * v1       # VectorNED(3, 0, 0)
+```
+
+## String representation
+
+```python
+v = VectorNED(1.0, 2.0, 3.0)
+print(str(v))   # (1.0,2.0,3.0)
+```
+
+## Example
+
+```python
+from aerpawlib.v1 import Coordinate, VectorNED
+
+start = Coordinate(35.7275, -78.6960, 10)
+
+# move 100 m north and 50 m east
+offset = VectorNED(100, 50, 0)
+waypoint = start + offset
+
+# compute magnitude
+print(f"Offset magnitude: {offset.hypot():.1f} m")  # 111.8 m
+
+# normalize and scale
+unit = offset.norm()
+ten_meters = unit * 10
+```

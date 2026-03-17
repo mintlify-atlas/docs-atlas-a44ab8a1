@@ -1,0 +1,183 @@
+---
+title: 'StateMachine'
+description: 'State-transition execution model for multi-phase drone missions.'
+---
+
+`StateMachine` is a runner where the script is expressed as a set of named states. Each state is an async method that returns the name of the next state (or `None` to stop).
+
+## How it works
+
+1. The launcher builds the state map by inspecting all methods decorated with `@state` or `@timed_state`.
+2. Execution starts at the state marked `first=True`.
+3. After each state returns, the machine transitions to the returned state name.
+4. Returning `None` (or calling `self.stop()`) ends execution.
+5. Background tasks (`@background`) run in parallel throughout.
+
+## Defining states
+
+### `@state`
+
+```python
+from aerpawlib.v1 import state
+
+@state(name: str, first: bool = False)
+```
+
+<ParamField path="name" type="string" required>
+  Unique name for this state. Cannot be an empty string.
+</ParamField>
+
+<ParamField path="first" type="boolean" default="false">
+  Set to `True` for the initial state. Exactly one state must have `first=True`.
+</ParamField>
+
+The decorated method must be async and return the name of the next state as a string, or `None` to stop:
+
+```python
+@state("takeoff", first=True)
+async def takeoff(self, drone: Drone) -> str:
+    await drone.takeoff(10)
+    return "navigate"
+```
+
+### `@timed_state`
+
+```python
+from aerpawlib.v1 import timed_state
+
+@timed_state(name: str, duration: float, loop: bool = False, first: bool = False)
+```
+
+<ParamField path="name" type="string" required>
+  State name.
+</ParamField>
+
+<ParamField path="duration" type="number" required>
+  Minimum time in seconds the state runs before transitioning.
+</ParamField>
+
+<ParamField path="loop" type="boolean" default="false">
+  When `True`, the function is called repeatedly until `duration` elapses. When `False`, the function is called once and the machine waits out the remaining time.
+</ParamField>
+
+<ParamField path="first" type="boolean" default="false">
+  Initial state flag.
+</ParamField>
+
+```python
+@timed_state("hover", duration=10.0, loop=True)
+async def hover(self, drone: Drone) -> str:
+    print(f"Altitude: {drone.position.alt:.1f} m")
+    return "land"  # returned after duration elapses
+```
+
+## Background tasks
+
+```python
+from aerpawlib.v1 import background
+```
+
+Decorate an async method with `@background` to run it in parallel with the state machine. Background tasks are started before the first state and cancelled when the machine stops.
+
+A background task that raises an exception is automatically restarted after a 0.5 s backoff.
+
+```python
+@background
+async def telemetry_log(self, drone: Drone) -> None:
+    while True:
+        print(f"pos={drone.position} bat={drone.battery.level}%")
+        await asyncio.sleep(2)
+```
+
+## Initialization tasks
+
+```python
+from aerpawlib.v1 import at_init
+```
+
+Decorate a method with `@at_init` to run it once during startup, before the vehicle is armed and before any state executes.
+
+```python
+@at_init
+async def setup(self, drone: Drone) -> None:
+    self.home = drone.home_coords
+```
+
+## Stopping the machine
+
+Two equivalent ways to stop:
+
+```python
+# 1. Return None from a state
+@state("land")
+async def land_state(self, drone: Drone):
+    await drone.land()
+    return None
+
+# 2. Call self.stop() and return any value
+@state("land")
+async def land_state(self, drone: Drone):
+    await drone.land()
+    self.stop()
+    return None
+```
+
+## Full example
+
+```python
+import asyncio
+from aerpawlib.v1 import (
+    StateMachine,
+    state,
+    timed_state,
+    background,
+    Drone,
+    Coordinate,
+)
+
+class PatrolMission(StateMachine):
+    def __init__(self):
+        self.patrol_index = 0
+        self.waypoints = [
+            Coordinate(35.7275, -78.6960, 15),
+            Coordinate(35.7280, -78.6955, 15),
+            Coordinate(35.7270, -78.6950, 15),
+        ]
+
+    @state("start", first=True)
+    async def start(self, drone: Drone) -> str:
+        await drone.takeoff(15)
+        return "patrol"
+
+    @state("patrol")
+    async def patrol(self, drone: Drone) -> str:
+        wp = self.waypoints[self.patrol_index % len(self.waypoints)]
+        await drone.goto_coordinates(wp)
+        self.patrol_index += 1
+        if self.patrol_index >= len(self.waypoints):
+            return "land"
+        return "patrol"
+
+    @timed_state("hover", duration=5.0, loop=True)
+    async def hover(self, drone: Drone) -> str:
+        print(f"Hovering at {drone.position.alt:.1f} m")
+        return "land"
+
+    @state("land")
+    async def land_state(self, drone: Drone) -> None:
+        await drone.land()
+        return None
+
+    @background
+    async def battery_watch(self, drone: Drone) -> None:
+        while True:
+            if drone.battery.level < 20:
+                print("Low battery!")
+            await asyncio.sleep(5)
+```
+
+## Running the script
+
+```bash
+aerpawlib --script patrol.py --vehicle drone --conn udp://:14540
+```

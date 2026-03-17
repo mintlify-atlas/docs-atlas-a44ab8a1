@@ -1,0 +1,156 @@
+---
+title: "Command validation"
+description: "Use can_takeoff, can_goto, and can_land to verify commands will succeed before issuing them."
+---
+
+All `Vehicle` subclasses expose three `can_*` methods that check whether a command will succeed. Each returns `(bool, str)` where the string describes the failure reason.
+
+<Note>
+`can_*` methods are optional — you can call commands directly without checking first. Use them to surface pre-condition failures to the user or to make branching decisions before committing to a command.
+</Note>
+
+## Pattern
+
+```python
+ok, msg = await drone.can_takeoff(altitude=20)
+if not ok:
+    print(f"Cannot take off: {msg}")
+    return
+await drone.takeoff(altitude=20)
+```
+
+## Methods
+
+### `can_takeoff(altitude, min_battery_percent=10.0)`
+
+```python
+async def can_takeoff(
+    self,
+    altitude: float,
+    min_battery_percent: float = 10.0,
+) -> Tuple[bool, str]
+```
+
+Performs local checks then optionally forwards to `SafetyCheckerClient.validate_takeoff`.
+
+**Local checks (in order):**
+1. `vehicle.armable` is `True`
+2. `vehicle.gps.fix_type >= 3` (3D fix)
+3. `vehicle.battery.level >= min_battery_percent`
+
+If all local checks pass and `vehicle.safety` is set, calls `safety.validate_takeoff(altitude, lat, lon)`.
+
+<ParamField path="altitude" type="float" required>
+  Planned takeoff altitude in metres. Passed to the safety checker.
+</ParamField>
+
+<ParamField path="min_battery_percent" type="float" default="10.0">
+  Minimum acceptable battery level as a percentage.
+</ParamField>
+
+<ResponseField name="returns" type="Tuple[bool, str]">
+  `(True, "")` if all checks pass; `(False, reason)` on the first failure.
+</ResponseField>
+
+```python
+ok, msg = await drone.can_takeoff(20, min_battery_percent=25.0)
+if ok:
+    await drone.takeoff(20)
+else:
+    print(f"Takeoff blocked: {msg}")
+```
+
+---
+
+### `can_goto(target, tolerance=2.0)`
+
+```python
+async def can_goto(
+    self,
+    target: Coordinate,
+    tolerance: float = 2.0,
+) -> Tuple[bool, str]
+```
+
+Validates the tolerance value and optionally forwards to `SafetyCheckerClient.validate_waypoint`.
+
+**Local checks:**
+1. `tolerance` is within `[MIN_POSITION_TOLERANCE_M, MAX_POSITION_TOLERANCE_M]`
+
+If the tolerance is valid and `vehicle.safety` is set, calls `safety.validate_waypoint(current_position, target)`.
+
+<ParamField path="target" type="Coordinate" required>
+  Target navigation coordinate.
+</ParamField>
+
+<ParamField path="tolerance" type="float" default="2.0">
+  Arrival radius in metres. Must be within the library's allowed range.
+</ParamField>
+
+<ResponseField name="returns" type="Tuple[bool, str]">
+  `(True, "")` if the goto would be allowed; `(False, reason)` otherwise.
+</ResponseField>
+
+```python
+target = Coordinate(35.728, -78.696, 20)
+ok, msg = await drone.can_goto(target, tolerance=3.0)
+if ok:
+    await drone.goto_coordinates(target, tolerance=3.0)
+```
+
+---
+
+### `can_land()`
+
+```python
+async def can_land(self) -> Tuple[bool, str]
+```
+
+Checks only with the `SafetyCheckerClient` if one is configured. Without a safety checker, always returns `(True, "")`.
+
+**Checks:**
+- If `vehicle.safety` is set: calls `safety.validate_landing(lat, lon)`.
+- Otherwise: returns `(True, "")` immediately.
+
+<ResponseField name="returns" type="Tuple[bool, str]">
+  `(True, "")` if landing is permitted; `(False, reason)` if the safety checker rejects it.
+</ResponseField>
+
+```python
+ok, msg = await drone.can_land()
+if ok:
+    await drone.land()
+else:
+    print(f"Landing blocked: {msg}")
+```
+
+## Combining with safety checker
+
+When a `SafetyCheckerClient` is passed to `connect()`, the `can_*` methods automatically delegate external validation:
+
+```python
+from aerpawlib.v2 import Drone
+from aerpawlib.v2.safety import SafetyCheckerClient
+
+drone = await Drone.connect(
+    "udpin://0.0.0.0:14550",
+    safety=SafetyCheckerClient("127.0.0.1", 14580),
+)
+
+# Now can_takeoff calls both local checks AND safety.validate_takeoff
+ok, msg = await drone.can_takeoff(30)
+```
+
+If the safety checker is unreachable or `None`, only local checks run.
+
+## Return format
+
+All three methods return `Tuple[bool, str]`:
+
+| Value | Meaning |
+|-------|---------|
+| `(True, "")` | Command is expected to succeed |
+| `(False, "Vehicle not armable: ...")` | Local check failed |
+| `(False, "Waypoint outside geofence")` | Safety checker rejected the command |
+
+The message string is suitable for logging or displaying to the operator.

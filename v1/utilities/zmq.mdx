@@ -1,0 +1,116 @@
+---
+title: 'ZMQ utilities'
+description: 'ZMQ proxy setup and connectivity helpers for multi-agent coordination.'
+---
+
+The ZMQ utilities provide the underlying message relay used by `ZmqStateMachine`. Multiple runners publish and subscribe through a central proxy process.
+
+```python
+from aerpawlib.v1 import run_zmq_proxy, check_zmq_proxy_reachable
+```
+
+## Architecture
+
+The proxy is a ZMQ **XSUB/XPUB forwarder**:
+
+- Runners publish messages to the proxy on port **5570** (`ZMQ_PROXY_IN_PORT`).
+- The proxy broadcasts received messages to all subscribers on port **5571** (`ZMQ_PROXY_OUT_PORT`).
+- Each runner subscribes to port 5571 and filters messages by its own `identifier`.
+
+```
+Runner A (PUB) → proxy :5570 → proxy :5571 → Runner A (SUB)
+                                             → Runner B (SUB)
+Runner B (PUB) → proxy :5570 →
+```
+
+## Functions
+
+### `run_zmq_proxy`
+
+```python
+run_zmq_proxy() -> None
+```
+
+Starts the XSUB/XPUB forwarder. **This function blocks** and must be called in a separate process or thread.
+
+The proxy binds to:
+- `tcp://*:5570` — incoming (XSUB)
+- `tcp://*:5571` — outgoing (XPUB)
+
+<Warning>
+If ports 5570 or 5571 are already in use, `bind()` will raise immediately. Start at most one proxy per host.
+</Warning>
+
+```python
+from multiprocessing import Process
+from aerpawlib.v1 import run_zmq_proxy
+
+def start_proxy():
+    run_zmq_proxy()
+
+proxy = Process(target=start_proxy, daemon=True)
+proxy.start()
+```
+
+### `check_zmq_proxy_reachable`
+
+```python
+check_zmq_proxy_reachable(
+    proxy_addr: str,
+    timeout_s: float = 2.0,
+) -> bool
+```
+
+Performs a TCP connectivity check to the proxy’s subscribe port (5571). Returns `True` if the proxy is accepting connections.
+
+This is called automatically by `ZmqStateMachine._initialize_zmq_bindings` — you typically do not need to call it directly.
+
+<ParamField path="proxy_addr" type="string" required>
+  Hostname or IP address of the proxy server.
+</ParamField>
+
+<ParamField path="timeout_s" type="number" default="2.0">
+  Connection timeout in seconds.
+</ParamField>
+
+```python
+if not check_zmq_proxy_reachable("127.0.0.1"):
+    print("Proxy not running")
+```
+
+## Starting the proxy via CLI
+
+The `aerpawlib` launcher includes a built-in `--run-proxy` flag that starts the proxy in-process:
+
+```bash
+aerpawlib --run-proxy
+```
+
+Run this before starting any scripts that use `ZmqStateMachine`. It blocks until interrupted.
+
+## Full multi-agent startup sequence
+
+```bash
+# Terminal 1: start the proxy
+aerpawlib --run-proxy
+
+# Terminal 2: start runner A
+aerpawlib --script leader.py --vehicle drone --conn udp://:14540 \
+    --zmq-identifier leader --zmq-proxy-server 127.0.0.1
+
+# Terminal 3: start runner B
+aerpawlib --script follower.py --vehicle drone --conn udp://:14541 \
+    --zmq-identifier follower --zmq-proxy-server 127.0.0.1
+```
+
+<Tip>
+For automated testing you can start the proxy programmatically using Python’s `multiprocessing` module before launching your test runners.
+</Tip>
+
+## Constants
+
+| Constant | Value | Description |
+|---|---|---|
+| `ZMQ_PROXY_IN_PORT` | `"5570"` | Proxy input port (XSUB) |
+| `ZMQ_PROXY_OUT_PORT` | `"5571"` | Proxy output port (XPUB) |
+| `ZMQ_QUERY_FIELD_TIMEOUT_S` | `30.0` | Default timeout for `query_field` |

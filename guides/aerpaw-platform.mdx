@@ -1,0 +1,172 @@
+---
+title: "AERPAW platform integration"
+description: "Use AERPAW_Platform for OEO logging, checkpoints, and understand arming behavior in AERPAW vs SITL."
+---
+
+When your script runs on AERPAW infrastructure, the `AERPAW_Platform` object provides access to platform services: logging to the OEO console, setting and checking checkpoints, and detecting whether you are in the AERPAW environment.
+
+## Import
+
+```python
+# v1
+from aerpawlib.v1.aerpaw import AERPAW_Platform
+
+# v2
+from aerpawlib.v2 import AERPAW_Platform
+```
+
+`AERPAW_Platform` is a lazy singleton proxy. The first attribute access triggers a connection attempt to the AERPAW forward server. If the server is unreachable (e.g. in SITL), `_connected` is `False` and platform-specific features degrade gracefully.
+
+## Connection detection
+
+aerpawlib determines whether it is running in the AERPAW environment by attempting a POST to the forward server at startup. You can check this flag yourself:
+
+```python
+if AERPAW_Platform._connected:
+    print("Running inside AERPAW")
+else:
+    print("Running in standalone/SITL mode")
+```
+
+When using the CLI, pass `--no-aerpaw-environment` to explicitly run outside the AERPAW environment. Without this flag, a failed connection attempt is treated as a fatal error.
+
+## OEO logging
+
+Send messages to the AERPAW OEO-Console (visible to the experiment coordinator):
+
+```python
+AERPAW_Platform.log_to_oeo("[aerpawlib] Taking off to 10m")
+```
+
+Specify severity:
+
+```python
+AERPAW_Platform.log_to_oeo("Battery low", severity="WARNING")
+AERPAW_Platform.log_to_oeo("Connection lost", severity="CRITICAL")
+AERPAW_Platform.log_to_oeo("Waypoint reached", severity="INFO")
+AERPAW_Platform.log_to_oeo("Geofence check failed", severity="ERROR")
+```
+
+Valid severity values: `"INFO"`, `"WARNING"`, `"ERROR"`, `"CRITICAL"`.
+
+If `_connected` is `False`, `log_to_oeo` logs locally but does not attempt to contact the server.
+
+## Checkpoints
+
+Checkpoints let you track experiment progress. Set a checkpoint when a phase completes; check it from another script or process to coordinate multi-node experiments.
+
+<Warning>
+  Checkpoint methods raise an exception if `AERPAW_Platform._connected` is `False`. Only call them inside the AERPAW environment.
+</Warning>
+
+### Boolean checkpoints
+
+```python
+# Set a checkpoint (mark it as reached)
+AERPAW_Platform.checkpoint_set("takeoff_complete")
+
+# Check if a checkpoint has been set
+if AERPAW_Platform.checkpoint_check("takeoff_complete"):
+    print("Takeoff phase complete")
+```
+
+### Counter checkpoints
+
+```python
+# Increment a named counter
+AERPAW_Platform.checkpoint_increment_counter("waypoints_visited")
+
+# Read the counter value
+count = AERPAW_Platform.checkpoint_check_counter("waypoints_visited")
+print(f"Visited {count} waypoints")
+```
+
+### String checkpoints
+
+```python
+# Store a string value
+AERPAW_Platform.checkpoint_set_string("current_phase", "transit")
+
+# Read the string value
+phase = AERPAW_Platform.checkpoint_check_string("current_phase")
+```
+
+### Resetting the checkpoint server
+
+Call this at the start of an experiment to clear state from previous runs:
+
+```python
+AERPAW_Platform.checkpoint_reset_server()
+```
+
+## Emergency stop
+
+If you detect a condition that requires immediate termination, call `vehicle._abort()`:
+
+```python
+if dangerous_condition:
+    AERPAW_Platform.log_to_oeo("[aerpawlib] Emergency stop triggered", severity="CRITICAL")
+    vehicle._abort()
+```
+
+This stops vehicle movement and halts the script. In AERPAW environments, the OEO log is sent before the vehicle is commanded to stop.
+
+## Safety checker port default
+
+In the AERPAW environment with v2, the `--safety-checker-port` defaults to `14580` automatically. You do not need to pass it explicitly when running on AERPAW hardware. Outside AERPAW (e.g. SITL), the port is `None` by default and safety validation is bypassed unless you specify `--safety-checker-port`.
+
+## Arming behavior
+
+The arming behavior differs between AERPAW and standalone/SITL modes:
+
+| Environment | Arming behavior |
+|---|---|
+| AERPAW hardware | Script waits for the safety pilot to arm the vehicle from the ground station. The vehicle will not arm itself. |
+| SITL / standalone | Vehicle arms automatically once the armable conditions are met (GPS fix, EKF stable, etc.). |
+
+If `--no-aerpaw-environment` is not passed and the AERPAW platform is unreachable, aerpawlib exits with a fatal error. Always pass `--no-aerpaw-environment` when testing locally with SITL:
+
+```bash
+aerpawlib --script my_mission.py \
+  --conn udp://127.0.0.1:14550 \
+  --vehicle drone \
+  --no-aerpaw-environment
+```
+
+## Complete example with AERPAW integration
+
+```python
+from aerpawlib.v1.runner import StateMachine, at_init, state
+from aerpawlib.v1.util import Coordinate
+from aerpawlib.v1.vehicle import Drone
+from aerpawlib.v1.aerpaw import AERPAW_Platform
+
+
+class AERPAWMission(StateMachine):
+    @at_init
+    async def pre_arm_setup(self, vehicle):
+        # Runs before arming; use for early OEO logging
+        AERPAW_Platform.checkpoint_reset_server()
+        AERPAW_Platform.log_to_oeo("[aerpawlib] Pre-arm setup complete")
+
+    @state(name="takeoff", first=True)
+    async def takeoff(self, vehicle: Drone):
+        AERPAW_Platform.log_to_oeo("[aerpawlib] Taking off")
+        await vehicle.takeoff(10)
+        AERPAW_Platform.checkpoint_set("takeoff_complete")
+        return "waypoint"
+
+    @state(name="waypoint")
+    async def waypoint(self, vehicle: Drone):
+        target = Coordinate(35.7275, -78.6960, 10)
+        AERPAW_Platform.log_to_oeo(f"[aerpawlib] Flying to {target}")
+        await vehicle.goto_coordinates(target)
+        AERPAW_Platform.checkpoint_set("waypoint_reached")
+        return "land"
+
+    @state(name="land")
+    async def land(self, vehicle: Drone):
+        AERPAW_Platform.log_to_oeo("[aerpawlib] Landing")
+        await vehicle.land()
+        AERPAW_Platform.log_to_oeo("[aerpawlib] Mission complete")
+```

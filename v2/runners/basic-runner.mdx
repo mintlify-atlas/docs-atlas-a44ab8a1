@@ -1,0 +1,106 @@
+---
+title: "BasicRunner"
+description: "Single entry-point runner for simple linear missions."
+---
+
+`BasicRunner` is the simplest runner: one async method, one vehicle, linear execution. The framework calls your `@entrypoint` method and handles cleanup.
+
+## Subclassing BasicRunner
+
+```python
+from aerpawlib.v2 import BasicRunner, Drone, entrypoint
+
+class MyMission(BasicRunner):
+    @entrypoint
+    async def run(self, drone: Drone):
+        await drone.takeoff(altitude=10)
+        await drone.goto_coordinates(drone.position + VectorNED(50, 0))
+        await drone.land()
+```
+
+The `@entrypoint` decorator registers the method and sets `MyMission.config = BasicRunnerConfig(entrypoint="run")` at class definition time.
+
+## `@entrypoint` decorator
+
+Decorates exactly one async method per runner class. The method receives the connected vehicle instance as its only argument.
+
+```python
+@entrypoint
+async def run(self, vehicle: Vehicle) -> None:
+    ...
+```
+
+<Warning>
+Only one method per class may be decorated with `@entrypoint`. Decorating a second method raises `RunnerError` at class definition time.
+</Warning>
+
+## Config dataclass
+
+The same configuration can be set explicitly without the decorator:
+
+```python
+from aerpawlib.v2 import BasicRunner, BasicRunnerConfig
+
+class MyMission(BasicRunner):
+    config = BasicRunnerConfig(entrypoint="run")
+
+    async def run(self, drone: Drone):
+        ...
+```
+
+### `BasicRunnerConfig`
+
+```python
+@dataclass
+class BasicRunnerConfig:
+    entrypoint: str  # Method name on the runner class
+```
+
+<ParamField path="entrypoint" type="str" required>
+  Name of the async method to call as the mission entry point.
+</ParamField>
+
+## `initialize_args`
+
+Override `initialize_args` to parse extra CLI arguments passed to your script:
+
+```python
+class MyMission(BasicRunner):
+    def initialize_args(self, args: list[str]) -> None:
+        import argparse
+        parser = argparse.ArgumentParser()
+        parser.add_argument("--altitude", type=float, default=10.0)
+        parsed = parser.parse_args(args)
+        self.altitude = parsed.altitude
+
+    @entrypoint
+    async def run(self, drone: Drone):
+        await drone.takeoff(self.altitude)
+```
+
+`args` contains only the unrecognised arguments left after the aerpawlib CLI has parsed its own flags.
+
+## `cleanup`
+
+Override `cleanup` to run synchronous teardown after the mission ends (or after an error):
+
+```python
+class MyMission(BasicRunner):
+    @entrypoint
+    async def run(self, drone: Drone):
+        ...
+
+    def cleanup(self) -> None:
+        print("Mission complete")
+```
+
+## Unexpected disarm guard
+
+`BasicRunner.run` wraps the entrypoint in `_run_with_disarm_guard`. If the vehicle disarms unexpectedly (e.g. motor failsafe) while the entrypoint is running, `UnexpectedDisarmError` is raised and the mission terminates cleanly.
+
+## Raises
+
+| Exception | When |
+|-----------|------|
+| `NoEntrypointError` | No `@entrypoint` method and no `BasicRunnerConfig.entrypoint` set |
+| `UnexpectedDisarmError` | Vehicle disarms during mission execution |

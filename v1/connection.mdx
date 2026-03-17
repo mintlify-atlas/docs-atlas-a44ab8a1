@@ -1,0 +1,133 @@
+---
+title: 'Connecting vehicles'
+description: 'Connection string formats, CLI flags, timeouts, and heartbeat behavior for v1 vehicles.'
+---
+
+All v1 vehicles (`Drone`, `Rover`) connect to an autopilot by passing a MAVLink connection string to the constructor. The connection is synchronous — the constructor blocks until a heartbeat is received or the timeout elapses.
+
+## Connection string formats
+
+The connection string follows MAVSDK's URL scheme:
+
+| Format | Example | Use case |
+|---|---|---|
+| `udpin://host:port` | `udpin://0.0.0.0:14550` | Listen for incoming UDP (SITL, GCS) |
+| `udpout://host:port` | `udpout://192.168.1.10:14550` | Connect to a remote UDP endpoint |
+| `udp://:port` | `udp://:14540` | Legacy UDP listen (equivalent to `udpin`) |
+| `tcpin://host:port` | `tcpin://0.0.0.0:5760` | Listen for incoming TCP |
+| `tcpout://host:port` | `tcpout://localhost:5760` | Connect to a remote TCP endpoint |
+| `tcp://host:port` | `tcp://localhost:5760` | TCP connection (legacy alias) |
+| `serial:///dev/path:baud` | `serial:///dev/ttyUSB0:57600` | Serial/USB connection |
+
+<Warning>
+The connection string must include `://`. An invalid scheme or missing `://` raises `AerpawConnectionError` immediately rather than timing out.
+</Warning>
+
+## Connecting in code
+
+```python
+from aerpawlib.v1 import Drone, Rover
+
+# SITL or GCS forwarding via UDP
+drone = Drone("udp://:14540")
+
+# Outbound UDP to a specific address
+drone = Drone("udpout://192.168.1.100:14550")
+
+# Serial connection at 57600 baud
+drone = Drone("serial:///dev/ttyUSB0:57600")
+
+# TCP connection
+drone = Drone("tcp://localhost:5760")
+
+# Rover
+rover = Rover("udp://:14541")
+```
+
+Each `Vehicle` instance spawns its own embedded `mavsdk_server` gRPC process. If you run multiple vehicles in the same Python process, pass a unique `mavsdk_server_port` to each:
+
+```python
+drone1 = Drone("udp://:14540", mavsdk_server_port=50051)
+drone2 = Drone("udp://:14541", mavsdk_server_port=50052)
+```
+
+## Connecting via CLI
+
+When running scripts through the `aerpawlib` launcher, pass the connection string with `--conn`:
+
+```bash
+aerpawlib --script my_mission.py --vehicle drone --conn udp://:14540
+```
+
+For rovers:
+
+```bash
+aerpawlib --script my_mission.py --vehicle rover --conn serial:///dev/ttyUSB0:57600
+```
+
+For scripts that need no vehicle:
+
+```bash
+aerpawlib --script my_mission.py --vehicle none
+```
+
+## Connection timeout
+
+The default connection timeout is **30 seconds** (`CONNECTION_TIMEOUT_S`). If no heartbeat is received within that window, `ConnectionTimeoutError` is raised:
+
+```python
+from aerpawlib.v1.exceptions import ConnectionTimeoutError
+
+try:
+    drone = Drone("udp://:14540")
+except ConnectionTimeoutError as e:
+    print(f"Could not connect: {e}")
+```
+
+## Heartbeat and armable state
+
+After construction, `vehicle.connected` reflects whether the autopilot heartbeat is currently active:
+
+```python
+if not drone.connected:
+    print("Heartbeat lost")
+```
+
+Before the vehicle can receive guided-mode commands, pre-arm health checks must pass. The `Vehicle` checks:
+
+- Global position OK (3D GPS fix)
+- Local position OK
+- Home position set
+- Autopilot pre-arm checks passing
+- Vehicle armable flag set by autopilot
+
+In **AERPAW environment**, aerpawlib waits for the safety pilot to arm the vehicle externally. In **standalone / SITL** mode, it auto-arms once all checks pass.
+
+## Port conflict detection
+
+If the UDP port in the connection string is already bound by another process, `PortInUseError` is raised immediately:
+
+```python
+from aerpawlib.v1.exceptions import PortInUseError
+
+try:
+    drone = Drone("udp://:14540")
+except PortInUseError as e:
+    print(f"Port in use: {e}")
+```
+
+## Closing the connection
+
+Call `vehicle.close()` to release all background threads and the embedded gRPC server:
+
+```python
+try:
+    drone = Drone("udp://:14540")
+    # ... run mission ...
+finally:
+    drone.close()
+```
+
+<Tip>
+Runners (BasicRunner, StateMachine) call `cleanup()` automatically when the script exits. If you construct a Vehicle manually outside a runner, call `close()` explicitly.
+</Tip>

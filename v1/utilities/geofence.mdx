@@ -1,0 +1,176 @@
+---
+title: 'Geofence utilities'
+description: 'Parse KML polygons and perform point-in-polygon and segment intersection tests.'
+---
+
+The geofence utilities load KML boundary files and provide geometric primitives used by the safety checker and custom mission logic.
+
+```python
+from aerpawlib.v1 import read_geofence, inside, do_intersect
+```
+
+## KML file format
+
+Geofence files are standard KML documents containing a single `Polygon` with an `outerBoundaryIs/LinearRing`. Coordinates are space-separated `lon,lat,alt` triples:
+
+```xml
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Document>
+    <Placemark>
+      <name>Flight Area</name>
+      <Polygon>
+        <outerBoundaryIs>
+          <LinearRing>
+            <coordinates>
+              -78.700,35.700,0
+              -78.600,35.700,0
+              -78.600,35.800,0
+              -78.700,35.800,0
+              -78.700,35.700,0
+            </coordinates>
+          </LinearRing>
+        </outerBoundaryIs>
+      </Polygon>
+    </Placemark>
+  </Document>
+</kml>
+```
+
+<Note>
+The first and last coordinate must be identical to close the polygon. aerpawlib’s `read_geofence` does not automatically close open rings.
+</Note>
+
+## Functions
+
+### `read_geofence`
+
+```python
+read_geofence(filePath: str) -> List[dict]
+```
+
+Parses a KML file and returns a list of `{"lat": float, "lon": float}` point dictionaries representing the polygon vertices.
+
+<ParamField path="filePath" type="string" required>
+  Path to the KML file.
+</ParamField>
+
+```python
+geofence = read_geofence("flight_area.kml")
+# [{"lat": 35.700, "lon": -78.700}, ...]
+```
+
+### `inside`
+
+```python
+inside(lon: float, lat: float, geofence: List[dict]) -> bool
+```
+
+Determines whether a point `(lon, lat)` is inside a polygon using ray-casting.
+
+<ParamField path="lon" type="number" required>
+  Longitude of the point to test.
+</ParamField>
+
+<ParamField path="lat" type="number" required>
+  Latitude of the point to test.
+</ParamField>
+
+<ParamField path="geofence" type="List[dict]" required>
+  Polygon vertices as returned by `read_geofence`.
+</ParamField>
+
+```python
+geofence = read_geofence("flight_area.kml")
+
+if inside(drone.position.lon, drone.position.lat, geofence):
+    print("Inside geofence")
+else:
+    print("Outside geofence")
+```
+
+<Note>
+Note the argument order: `lon` comes before `lat`. This matches the KML coordinate order (longitude, latitude).
+</Note>
+
+### `do_intersect`
+
+```python
+do_intersect(
+    px: float, py: float,
+    qx: float, qy: float,
+    rx: float, ry: float,
+    sx: float, sy: float,
+) -> bool
+```
+
+Determines whether line segment PQ intersects line segment RS. Returns `True` if the segments cross or share a point.
+
+<ParamField path="px, py" type="number" required>
+  Start point of segment PQ.
+</ParamField>
+
+<ParamField path="qx, qy" type="number" required>
+  End point of segment PQ.
+</ParamField>
+
+<ParamField path="rx, ry" type="number" required>
+  Start point of segment RS.
+</ParamField>
+
+<ParamField path="sx, sy" type="number" required>
+  End point of segment RS.
+</ParamField>
+
+```python
+# Does the path from current to target cross the fence edge?
+crosses = do_intersect(
+    edge_start["lon"], edge_start["lat"],
+    edge_end["lon"],   edge_end["lat"],
+    current.lon,       current.lat,
+    target.lon,        target.lat,
+)
+```
+
+## Additional helpers
+
+These lower-level functions are used internally by `do_intersect` and the safety checker:
+
+| Function | Signature | Description |
+|---|---|---|
+| `lies_on_segment` | `(px, py, qx, qy, rx, ry) -> bool` | Tests if point Q lies on segment PR |
+| `orientation` | `(px, py, qx, qy, rx, ry) -> int` | Returns 0 (colinear), 1 (CW), 2 (CCW) for ordered triplet |
+
+## Backward-compatible aliases
+
+The following camelCase aliases exist for legacy compatibility:
+
+| Alias | Canonical name |
+|---|---|
+| `readGeofence` | `read_geofence` |
+| `doIntersect` | `do_intersect` |
+| `liesOnSegment` | `lies_on_segment` |
+
+## Example: custom geofence check
+
+```python
+from aerpawlib.v1 import read_geofence, inside, Drone, BasicRunner, entrypoint, Coordinate
+
+class GeofencedMission(BasicRunner):
+    def __init__(self):
+        self.geofence = read_geofence("flight_area.kml")
+
+    @entrypoint
+    async def run(self, drone: Drone):
+        await drone.takeoff(10)
+
+        target = Coordinate(35.7275, -78.6960, 10)
+
+        if not inside(target.lon, target.lat, self.geofence):
+            print("Target is outside geofence, aborting")
+            await drone.land()
+            return
+
+        await drone.goto_coordinates(target)
+        await drone.land()
+```

@@ -1,0 +1,128 @@
+---
+title: 'v1 architecture and tradeoffs'
+description: 'How the MAVSDK backend is integrated into the backward-compatible v1 API, and the design tradeoffs involved.'
+---
+
+The v1 API maintains 100% backward compatibility with scripts written for the original DroneKit-based aerpawlib. Achieving this while switching to the modern, `asyncio`-native MAVSDK backend required several significant architectural compromises.
+
+## Dual-loop architecture
+
+Legacy scripts run in a standard `asyncio` event loop managed by the runner. MAVSDK requires its own `asyncio` loop for gRPC communication, and MAVSDK coroutines must be scheduled on the loop that initialized the gRPC channel.
+
+Every v1 `Vehicle` instance therefore maintains **two event loops**:
+
+1. **User loop** — the runner’s asyncio loop, where state machine states and entrypoints execute.
+2. **MAVSDK loop** — a private `asyncio` event loop running in a dedicated background thread, used exclusively for MAVSDK operations.
+
+This satisfies the constraint that user code looks synchronous (or uses familiar `await` patterns) while MAVSDK keeps its own isolated loop.
+
+## Command bridging (`_run_on_mavsdk_loop`)
+
+Because MAVSDK coroutines can only execute on the loop that initialized them, every vehicle command — `arm`, `takeoff`, `goto`, etc. — is bridged from the user loop to the MAVSDK loop:
+
+```python
+await self._run_on_mavsdk_loop(self._system.action.takeoff())
+```
+
+Internally this uses `asyncio.run_coroutine_threadsafe` to schedule the coroutine on the background thread, then `asyncio.wrap_future` to await its result on the user loop. The bridging adds a small latency penalty to every command compared to a pure-`asyncio` v2 API.
+
+Operations that time out on the MAVSDK loop raise `RuntimeError` after 30 seconds to prevent indefinite hangs.
+
+## Thread-safe telemetry
+
+Telemetry data (position, velocity, heading, battery, etc.) is received asynchronously on the MAVSDK background thread but read by user scripts on the main thread.
+
+All internal state is stored in `ThreadSafeValue` wrappers:
+
+```python
+self._position_lat = ThreadSafeValue(0.0)
+self._position_lon = ThreadSafeValue(0.0)
+self._armed_state  = ThreadSafeValue(False)
+```
+
+`ThreadSafeValue` uses a `threading.Lock` for atomic read/write operations, preventing race conditions and partial reads at the cost of locking overhead on every telemetry access.
+
+```python
+class ThreadSafeValue:
+    def __init__(self, initial_value):
+        self._value = initial_value
+        self._lock = threading.Lock()
+
+    def get(self):
+        with self._lock:
+            return self._value
+
+    def set(self, value):
+        with self._lock:
+            self._value = value
+```
+
+## gRPC and fork limitations
+
+MAVSDK relies on `grpcio`. gRPC is incompatible with `fork()` in multi-threaded environments (particularly on macOS). When a script uses `ExternalProcess` to spawn subprocesses, gRPC detects active background telemetry threads and emits:
+
+```
+Other threads are currently calling into gRPC, skipping fork() handlers
+```
+
+This is a known cosmetic warning. The mission continues to function. Suppress it by setting:
+
+```bash
+export GRPC_ENABLE_FORK_SUPPORT=false
+```
+
+## Blocking synchronous connection
+
+DroneKit supported flat, synchronous `connect("...")` calls. MAVSDK’s `.connect()` is a coroutine.
+
+To preserve the original API, `Vehicle.__init__` calls `_connect_sync()`, which:
+
+1. Spawns the background MAVSDK thread.
+2. Starts the private event loop.
+3. Runs `_connect_async()` on that loop, which connects MAVSDK and waits for a heartbeat.
+4. Blocks the calling thread until the heartbeat arrives or `CONNECTION_TIMEOUT_S` (30 s) elapses.
+
+This allows legacy scripts to construct vehicles at module level without wrapping everything in `async def main()`.
+
+## Attribute compatibility wrappers
+
+DroneKit exposed `Battery`, `GPSInfo`, and `Attitude` as classes with specific attribute names. MAVSDK returns protobuf-like objects with different names.
+
+v1 provides compat classes that mirror the DroneKit interface:
+
+| Class | DroneKit attribute | MAVSDK source |
+|---|---|---|
+| `_BatteryCompat` | `.voltage`, `.current`, `.level` | `telemetry.battery()` |
+| `_GPSInfoCompat` | `.fix_type`, `.satellites_visible` | `telemetry.gps_info()` |
+| `_AttitudeCompat` | `.pitch`, `.roll`, `.yaw` | `telemetry.attitude_euler()` |
+| `_VersionCompat` | `.major`, `.minor`, `.patch` | `info.get_version()` |
+
+Code that accesses `vehicle.battery.level` or `vehicle.gps.fix_type` continues to work without modification.
+
+<Note>
+Compat objects do not inherit from their DroneKit counterparts. If your code uses `isinstance(vehicle.battery, dronekit.Battery)`, those checks will fail.
+</Note>
+
+## Manual task reaping
+
+In a pure-`asyncio` application, tasks are automatically cancelled when the event loop closes. In v1, the MAVSDK loop persists across state transitions for the lifetime of the vehicle object.
+
+An explicit `vehicle.close()` method is required to:
+
+1. Cancel all pending MAVSDK futures.
+2. Cancel telemetry and command tasks on the MAVSDK loop.
+3. Stop the MAVSDK event loop.
+4. Join the background thread (5 s timeout).
+5. Release the gRPC server reference.
+
+Without `close()`, the process would hang on exit due to the persistent background thread. Runners call `cleanup()` automatically, but if you construct a `Vehicle` manually, call `close()` in a `finally` block.
+
+## Summary of tradeoffs
+
+| Decision | Benefit | Cost |
+|---|---|---|
+| Dual event loops | Preserves synchronous-looking API | Per-command bridging latency; extra thread per vehicle |
+| `ThreadSafeValue` | Race-free telemetry reads | Lock overhead on every property access |
+| Blocking constructor | No changes to legacy script structure | Blocks caller thread during connection |
+| Compat classes | DroneKit attribute names still work | `isinstance` checks against DroneKit types fail |
+| Explicit `close()` | Deterministic cleanup | Callers must not forget to call it |

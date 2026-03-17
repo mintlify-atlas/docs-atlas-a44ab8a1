@@ -1,0 +1,162 @@
+---
+title: "Coordinate"
+description: "WGS84 position type with distance, bearing, and vector arithmetic."
+---
+
+`Coordinate` represents an absolute point in WGS84 space: latitude, longitude, and relative altitude.
+
+## Constructor
+
+```python
+from aerpawlib.v2 import Coordinate
+
+coord = Coordinate(lat=35.727436, lon=-78.696587, alt=20.0)
+# alt is optional, defaults to 0.0
+coord2 = Coordinate(35.727436, -78.696587)
+```
+
+## Fields
+
+<ResponseField name="lat" type="float" required>
+  Latitude in degrees (WGS84).
+</ResponseField>
+
+<ResponseField name="lon" type="float" required>
+  Longitude in degrees (WGS84).
+</ResponseField>
+
+<ResponseField name="alt" type="float" default="0.0">
+  Relative altitude in metres above the home point (for vehicle properties) or above the ground (for plan waypoints).
+</ResponseField>
+
+## Methods
+
+### `distance(other)`
+
+```python
+def distance(self, other: Coordinate) -> float
+```
+
+Return the 3D distance to another coordinate in metres. Uses the Haversine formula for ground distance and combines with altitude difference via Pythagoras.
+
+<ParamField path="other" type="Coordinate" required>
+  Target coordinate.
+</ParamField>
+
+<ResponseField name="returns" type="float">
+  3D distance in metres.
+</ResponseField>
+
+```python
+a = Coordinate(35.727, -78.696, 0)
+b = Coordinate(35.728, -78.695, 10)
+print(a.distance(b))  # ~145 m
+```
+
+---
+
+### `ground_distance(other)`
+
+```python
+def ground_distance(self, other: Coordinate) -> float
+```
+
+Return the horizontal (2D) distance to another coordinate in metres. Altitude difference is ignored.
+
+<ParamField path="other" type="Coordinate" required>
+  Target coordinate.
+</ParamField>
+
+<ResponseField name="returns" type="float">
+  Ground distance in metres.
+</ResponseField>
+
+```python
+a = Coordinate(35.727, -78.696, 0)
+b = Coordinate(35.728, -78.696, 100)  # altitude ignored
+print(a.ground_distance(b))  # ~111 m
+```
+
+---
+
+### `bearing(other, wrap_360=True)`
+
+```python
+def bearing(self, other: Coordinate, wrap_360: bool = True) -> float
+```
+
+Return the bearing from this coordinate to `other` in degrees.
+
+<ParamField path="other" type="Coordinate" required>
+  Target coordinate.
+</ParamField>
+
+<ParamField path="wrap_360" type="bool" default="True">
+  If `True`, wrap the result to \[0, 360).
+</ParamField>
+
+<ResponseField name="returns" type="float">
+  Bearing in degrees.
+</ResponseField>
+
+---
+
+### `to_json()`
+
+```python
+def to_json(self) -> str
+```
+
+Return a JSON string with `lat`, `lon`, and `alt` fields.
+
+```python
+coord = Coordinate(35.727, -78.696, 20)
+print(coord.to_json())  # '{"lat": 35.727, "lon": -78.696, "alt": 20.0}'
+```
+
+## Arithmetic
+
+### `__add__(VectorNED)` — offset by a vector
+
+```python
+coord + vector  # Coordinate
+```
+
+Add a `VectorNED` displacement to produce a new `Coordinate`. North/East components update lat/lon using the WGS84 earth radius; the negative down component adds to altitude.
+
+```python
+from aerpawlib.v2 import Coordinate, VectorNED
+
+start = Coordinate(35.727, -78.696, 20)
+target = start + VectorNED(north=50, east=0, down=-5)  # 50m north, 5m higher
+```
+
+### `__sub__` — vector from another coordinate
+
+```python
+coord - other_coord  # VectorNED
+coord - vector       # Coordinate
+```
+
+Subtracting a `Coordinate` returns a `VectorNED` (the displacement between them). Subtracting a `VectorNED` returns a new `Coordinate`.
+
+```python
+vec = target - start  # VectorNED(north~50, east~0, down~-5)
+```
+
+## Common patterns
+
+```python
+# Move 20 m north from current position
+target = drone.position + VectorNED(20, 0)
+await drone.goto_coordinates(target)
+
+# Check distance to waypoint
+dist = drone.position.distance(waypoint)
+if dist < 5:
+    print("Near waypoint")
+
+# Compute bearing to target
+bearing = drone.position.bearing(target)
+print(f"Heading to target: {bearing:.1f}°")
+```

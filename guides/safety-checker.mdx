@@ -1,0 +1,178 @@
+---
+title: "Safety checker"
+description: "Validate waypoints, takeoff altitude, and speed against geofences using the safety checker server and client."
+---
+
+The safety checker validates vehicle commands against configurable constraints before they are sent to the vehicle. It runs as a separate process and communicates with your script over ZMQ.
+
+## What it validates
+
+- **Waypoints**: destination is inside the include geofence, not inside any exclude (no-go) geofence, and the path between current and target position does not cross a geofence boundary
+- **Takeoff altitude**: within configured `min_alt` / `max_alt` bounds (copters only)
+- **Landing location**: within 5 meters of the takeoff location (copters only)
+- **Speed changes**: within configured `min_speed` / `max_speed` bounds
+
+## v1 safety checker
+
+### Configuration file
+
+Create a YAML config file describing the vehicle constraints and geofence files:
+
+```yaml config.yaml
+vehicle_type: copter    # "copter" or "rover"
+max_speed: 10.0         # m/s
+min_speed: 0.5          # m/s
+max_alt: 120.0          # meters AGL (copters only)
+min_alt: 2.0            # meters AGL (copters only)
+include_geofences:      # Allowed flight regions (KML files)
+  - geofence_allowed.kml
+exclude_geofences:      # No-go zones (KML files)
+  - geofence_no_fly.kml
+```
+
+Geofence paths are relative to the directory containing the YAML file.
+
+### KML geofence format
+
+Geofences are KML polygons. Each KML file should contain a single `<Placemark>` with a `<Polygon>` element:
+
+```xml geofence_allowed.kml
+<?xml version="1.0" encoding="UTF-8"?>
+<kml xmlns="http://www.opengis.net/kml/2.2">
+  <Placemark>
+    <Polygon>
+      <outerBoundaryIs>
+        <LinearRing>
+          <coordinates>
+            -78.700,35.725,0
+            -78.690,35.725,0
+            -78.690,35.730,0
+            -78.700,35.730,0
+            -78.700,35.725,0
+          </coordinates>
+        </LinearRing>
+      </outerBoundaryIs>
+    </Polygon>
+  </Placemark>
+</kml>
+```
+
+Coordinates are in `longitude,latitude,altitude` order (KML standard).
+
+### Starting the server
+
+```bash
+python -m aerpawlib.v1.safety --port 14580 --vehicle_config config.yaml
+```
+
+The server blocks until terminated. Run it in a separate terminal or background process.
+
+### SafetyCheckerClient (v1)
+
+In your script, create a `SafetyCheckerClient` and call it before each vehicle command:
+
+```python
+from aerpawlib.v1 import (
+    Drone, Coordinate, BasicRunner, entrypoint,
+    SafetyCheckerClient,
+)
+
+class SafeMission(BasicRunner):
+    def initialize_args(self, extra_args):
+        self._safety = SafetyCheckerClient(addr="127.0.0.1", port=14580)
+
+    @entrypoint
+    async def run(self, vehicle: Drone):
+        target = Coordinate(35.7275, -78.6960, 10)
+
+        # Validate takeoff
+        ok, msg = self._safety.validate_takeoff_command(
+            takeoff_alt=10,
+            current_lat=vehicle.position.lat,
+            current_lon=vehicle.position.lon,
+        )
+        if not ok:
+            raise RuntimeError(f"Takeoff rejected: {msg}")
+        await vehicle.takeoff(10)
+
+        # Validate waypoint before commanding
+        ok, msg = self._safety.validate_waypoint_command(
+            current_location=vehicle.position,
+            next_location=target,
+        )
+        if not ok:
+            raise RuntimeError(f"Waypoint rejected: {msg}")
+        await vehicle.goto_coordinates(target)
+
+        # Validate landing
+        ok, msg = self._safety.validate_landing_command(
+            current_lat=vehicle.position.lat,
+            current_lon=vehicle.position.lon,
+        )
+        if not ok:
+            raise RuntimeError(f"Landing rejected: {msg}")
+        await vehicle.land()
+```
+
+#### Available v1 client methods
+
+| Method | Arguments | Returns |
+|---|---|---|
+| `check_server_status()` | — | `(bool, str)` |
+| `validate_waypoint_command(current_location, next_location)` | `Coordinate, Coordinate` | `(bool, str)` |
+| `validate_takeoff_command(takeoff_alt, current_lat, current_lon)` | `float, float, float` | `(bool, str)` |
+| `validate_landing_command(current_lat, current_lon)` | `float, float` | `(bool, str)` |
+| `validate_change_speed_command(new_speed)` | `float` | `(bool, str)` |
+
+All methods return `(True, "")` on success or `(False, error_message)` on rejection.
+
+## v2 safety checker
+
+In v2, the safety client is passed automatically to the vehicle at startup when `--safety-checker-port` is provided (or when running inside AERPAW, where it defaults to port `14580`).
+
+### Running the server
+
+The server is the same as v1:
+
+```bash
+python -m aerpawlib.v1.safety --port 14580 --vehicle_config config.yaml
+```
+
+### CLI integration
+
+Pass the port when running your v2 script:
+
+```bash
+aerpawlib --script my_mission.py \
+  --conn udp://127.0.0.1:14550 \
+  --vehicle drone \
+  --api-version v2 \
+  --no-aerpaw-environment \
+  --safety-checker-port 14580
+```
+
+aerpawlib connects to the `SafetyCheckerServer` and injects the client as `vehicle.safety`. If the connection fails outside the AERPAW environment, a `NoOpSafetyChecker` is used and all validations pass through with a warning.
+
+### v2 validation methods
+
+The `SafetyCheckerClient` in v2 has async equivalents:
+
+```python
+# These are called internally by vehicle commands when safety is configured
+await vehicle.safety.validate_takeoff(alt, lat, lon)     # -> (bool, str)
+await vehicle.safety.validate_waypoint(current, target)  # -> (bool, str)
+await vehicle.safety.validate_landing(lat, lon)          # -> (bool, str)
+await vehicle.safety.validate_change_speed(speed)        # -> (bool, str)
+```
+
+## AERPAW environment behavior
+
+When running inside AERPAW:
+
+- v2 automatically defaults `--safety-checker-port` to `14580` when the AERPAW platform is detected.
+- If the `SafetyCheckerServer` is unreachable in AERPAW, the script exits with a fatal error.
+- Outside AERPAW (e.g. SITL), a failed connection produces a warning and uses `NoOpSafetyChecker` (passthrough).
+
+<Warning>
+  Never skip safety validation in a live AERPAW experiment. The safety checker is a required safeguard that prevents flights outside the approved geofence.
+</Warning>

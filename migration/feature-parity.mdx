@@ -1,0 +1,79 @@
+---
+title: "v1 vs v2 feature parity"
+description: "A comprehensive comparison of features available in the aerpawlib v1 and v2 APIs."
+---
+
+This page documents which features are available in each API version. Use it to assess migration readiness or to decide which API to use for a new project.
+
+<Tip>
+  New projects should use **v2**. Features marked as v2-only are not available in v1 and have no v1 equivalent.
+</Tip>
+
+## Vehicles
+
+| Feature | v1 | v2 |
+|---------|----|----|
+| `Drone` | Yes | Yes |
+| `Rover` | Yes | Yes |
+| `DummyVehicle` | Yes | Yes |
+| `MockVehicle` (in-memory test double) | No | Yes |
+
+## Runners
+
+| Feature | v1 | v2 |
+|---------|----|----|
+| `BasicRunner` | Yes | Yes |
+| `StateMachine` | Yes | Yes |
+| `ZmqStateMachine` | Yes | Yes |
+| Config dataclass (`BasicRunnerConfig`, `StateMachineConfig`) | No | Yes |
+
+## Decorators
+
+| Feature | v1 | v2 |
+|---------|----|----|
+| `@entrypoint` | Yes | Yes |
+| `@state`, `@timed_state` | Yes | Yes |
+| `@background`, `@at_init` | Yes | Yes |
+| `@expose_zmq`, `@expose_field_zmq` | Yes | Yes |
+
+## Types and utilities
+
+| Feature | v1 | v2 |
+|---------|----|----|
+| `Coordinate` | Yes | Yes |
+| `VectorNED` | Yes | Yes |
+| `VectorNED.cross_product` | Yes | Yes |
+| `read_from_plan` | Yes | Yes |
+| `read_from_plan_complete` | Yes | Yes |
+| `get_location_from_waypoint` | Yes | Yes |
+| Geofence (`read_geofence`, `inside`, `do_intersect`) | Yes | Yes |
+
+## Safety
+
+| Feature | v1 | v2 |
+|---------|----|----|
+| `SafetyCheckerClient` / `SafetyCheckerServer` | Yes | Yes |
+| Command validation (`can_takeoff`, `can_goto`, `can_land`) | No | Yes |
+| `vehicle.safety` integration | No | Yes |
+
+## Commands and control
+
+| Feature | v1 | v2 |
+|---------|----|----|
+| Blocking `goto_coordinates` | Yes | Yes |
+| Non-blocking goto (`VehicleTask`) | No | Yes |
+| `set_velocity` with duration | Yes | Yes |
+| Connection | Blocking | Async |
+
+## v2-only features
+
+The following features are only available in v2 and have no v1 equivalent:
+
+- **`VehicleTask`** — issue `goto_coordinates` and other commands without blocking the calling coroutine. Poll progress, cancel in flight, or `await` completion.
+- **`@at_init` in v2** — while `@at_init` exists in v1, v2 adds lifecycle guarantees around initialization ordering.
+- **Command validation** — `can_takeoff(altitude)`, `can_goto(coordinate)`, and `can_land()` query the safety checker before a command is issued. Returns `(bool, str)` so scripts can handle rejections gracefully.
+- **`vehicle.safety` attribute** — the attached `SafetyCheckerClient` is accessible at runtime via `vehicle.safety`.
+- **Config dataclasses** — `BasicRunnerConfig` and `StateMachineConfig` allow runner configuration to be expressed as a class attribute instead of decorators.
+- **Typed exceptions** — `VehicleCommandError`, `SafetyCheckError`, and related exception types replace generic `Exception` and `RuntimeError`.
+- **`MockVehicle`** — an in-memory vehicle implementation for unit testing scripts without hardware or SITL.
+- **Async connection** — `Drone.connect()` and `Rover.connect()` are `async` methods, enabling connection as part of an async workflow.

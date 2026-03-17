@@ -1,0 +1,31 @@
+---
+title: "Roadmap"
+description: "Planned features, known issues, and completed improvements for the aerpawlib v1 and v2 APIs."
+---
+
+This page tracks planned work and recently completed improvements across both API versions.
+
+<Note>
+  Both v1 and v2 include integration tests, but these tests require a running SITL instance and are not executed in CI. They must be verified manually before each release using `pytest tests/integration/ --no-sitl`.
+</Note>
+
+## v1 API
+
+v1 is stable. No breaking changes are planned. The items below are bug fixes and test infrastructure improvements.
+
+| Status | Item |
+|--------|------|
+| Open | Integration tests require a running SITL instance and are not executed in CI. Verify manually before each release with `pytest tests/integration/ --no-sitl`. |
+| Done | **Rover goto fix** — raw MAVLink now forces ArduPilot Rover into GUIDED mode before arming, resolving the issue where goto commands were accepted only from the MAVProxy console. |
+| Done | **ZmqStateMachine race condition fix** — message handling is now sequential (inline `await`) instead of spawning concurrent tasks, eliminating ordering hazards on shared state. |
+| Done | **ZmqStateMachine malformed-message fix** — all incoming ZMQ dict fields are now accessed via `.get()` with a warning log, matching v2 behavior and preventing `KeyError` on unexpected payloads. |
+
+## v2 API
+
+v2 is under active development. Breaking changes may occur before a stable release.
+
+| Status | Item |
+|--------|------|
+| Open | Integration tests require a running SITL instance and are not executed in CI. Verify manually before each release with `pytest tests/integration/ --no-sitl`. |
+| Done | **Rover goto fix** — same GUIDED-mode fix applied as in v1. |
+| Done | **ZmqStateMachine race condition and malformed-message fix** — sequential message handling and `.get()`-based field access applied as in v1. |

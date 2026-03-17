@@ -1,0 +1,99 @@
+---
+title: "ZMQ utilities"
+description: "Run the ZMQ proxy and check connectivity for multi-runner coordination."
+---
+
+These utilities support the `ZmqStateMachine` multi-runner coordination system. The proxy is an XSUB/XPUB forwarder that all runners connect to for pub/sub messaging.
+
+## Functions
+
+### `run_zmq_proxy()`
+
+```python
+def run_zmq_proxy() -> None
+```
+
+Start a ZMQ XSUB/XPUB forwarder proxy. **Blocking** — runs until the process is killed.
+
+The proxy listens on two ports defined by the library constants:
+- `ZMQ_PROXY_IN_PORT` — XSUB (runners publish here)
+- `ZMQ_PROXY_OUT_PORT` — XPUB (runners subscribe here)
+
+Start this proxy in a separate process **before** launching any `ZmqStateMachine` runners.
+
+```python
+from aerpawlib.v2 import run_zmq_proxy
+import multiprocessing
+
+if __name__ == "__main__":
+    proxy = multiprocessing.Process(target=run_zmq_proxy)
+    proxy.start()
+    # ... then launch runners
+```
+
+---
+
+### `check_zmq_proxy_reachable(proxy_addr, timeout_s=2.0)`
+
+```python
+def check_zmq_proxy_reachable(
+    proxy_addr: str,
+    timeout_s: float = 2.0,
+) -> bool
+```
+
+Check whether the ZMQ proxy is reachable by attempting a TCP connection to `ZMQ_PROXY_OUT_PORT`.
+
+<ParamField path="proxy_addr" type="str" required>
+  Hostname or IP address of the machine running the ZMQ proxy.
+</ParamField>
+
+<ParamField path="timeout_s" type="float" default="2.0">
+  Connection attempt timeout in seconds.
+</ParamField>
+
+<ResponseField name="returns" type="bool">
+  `True` if the proxy port accepts TCP connections within the timeout.
+</ResponseField>
+
+```python
+from aerpawlib.v2 import check_zmq_proxy_reachable
+
+if not check_zmq_proxy_reachable("192.168.1.10"):
+    print("ZMQ proxy not reachable")
+```
+
+## CLI
+
+The proxy can also be started from the command line without writing a script:
+
+```bash
+aerpawlib --run-proxy
+```
+
+This starts the proxy in the foreground and blocks. Run it in a separate terminal or as a background process before starting runners:
+
+```bash
+# Terminal 1 — start proxy
+aerpawlib --run-proxy
+
+# Terminal 2 — start drone runner
+aerpawlib --api-version v2 --script drone_mission.py --vehicle drone --conn udpin://... \
+    --zmq-identifier drone-1 --zmq-proxy-server 127.0.0.1
+
+# Terminal 3 — start rover runner
+aerpawlib --api-version v2 --script rover_mission.py --vehicle rover --conn udpin://... \
+    --zmq-identifier rover-1 --zmq-proxy-server 127.0.0.1
+```
+
+## How it works
+
+`ZmqStateMachine` runners connect to the proxy on startup:
+- A **XSUB** socket connects to the proxy's IN port to publish messages.
+- A **XPUB** socket connects to the proxy's OUT port to receive messages.
+
+Messages are filtered by `identifier` field — each runner only processes messages addressed to its own identifier. This means all runners can share a single proxy regardless of how many are running.
+
+<Note>
+The proxy and all runners must be able to reach each other over TCP. In AERPAW, the proxy typically runs on the experiment controller and runners connect via the experiment's internal network.
+</Note>
